@@ -8,5 +8,6 @@ COPY docker-context-files /docker-context-files
 RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
 RUN if [[ -f /docker-context-files/chromedriver ]]; then \
         cp /docker-context-files/chromedriver "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
+        chmod a+x "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
     fi;
 RUN rm -Rf /docker-context-files
