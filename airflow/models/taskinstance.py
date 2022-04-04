@@ -22,11 +22,14 @@ import math
 import os
 import pickle
 import signal
+import threading
 import warnings
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import partial
+from inspect import currentframe
 from tempfile import NamedTemporaryFile
+from types import TracebackType
 from typing import IO, TYPE_CHECKING, Any, Iterable, List, NamedTuple, Optional, Tuple, Union
 from urllib.parse import quote
 
@@ -94,7 +97,7 @@ from airflow.utils.platform import getuser
 from airflow.utils.retries import run_with_db_retries
 from airflow.utils.session import create_session, provide_session
 from airflow.utils.sqlalchemy import ExtendedJSON, UtcDateTime, with_row_locks
-from airflow.utils.state import DagRunState, State
+from airflow.utils.state import DagRunState, State, TaskInstanceState
 from airflow.utils.timeout import timeout
 
 try:
@@ -114,6 +117,8 @@ log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from airflow.models.baseoperator import BaseOperator
     from airflow.models.dag import DAG, DagModel, DagRun
+
+_TASK_EXECUTION_FRAME_LOCAL_STORAGE = threading.local()
 
 
 @contextlib.contextmanager
@@ -181,11 +186,11 @@ def clear_task_instances(
     job_ids = []
     task_id_by_key = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))
     for ti in tis:
-        if ti.state == State.RUNNING:
+        if ti.state == TaskInstanceState.RUNNING:
             if ti.job_id:
                 # If a task is cleared when running, set its state to RESTARTING so that
                 # the task is terminated and becomes eligible for retry.
-                ti.state = State.RESTARTING
+                ti.state = TaskInstanceState.RESTARTING
                 job_ids.append(ti.job_id)
         else:
             task_id = ti.task_id
@@ -200,7 +205,7 @@ def clear_task_instances(
                 # outdated. We make max_tries the maximum value of its
                 # original max_tries or the last attempted try number.
                 ti.max_tries = max(ti.max_tries, ti.prev_attempted_tries)
-            ti.state = State.NONE
+            ti.state = None
             ti.external_executor_id = None
             session.merge(ti)
 
@@ -238,7 +243,7 @@ def clear_task_instances(
         from airflow.jobs.base_job import BaseJob
 
         for job in session.query(BaseJob).filter(BaseJob.id.in_(job_ids)).all():
-            job.state = State.RESTARTING
+            job.state = TaskInstanceState.RESTARTING
 
     if activate_dag_runs is not None:
         warnings.warn(
@@ -267,10 +272,11 @@ def clear_task_instances(
             )
             .all()
         )
+        dag_run_state = DagRunState(dag_run_state)  # Validate the state value.
         for dr in drs:
             dr.state = dag_run_state
             dr.start_date = timezone.utcnow()
-            if dag_run_state == State.QUEUED:
+            if dag_run_state == DagRunState.QUEUED:
                 dr.last_scheduling_decision = None
                 dr.start_date = None
 
@@ -1409,7 +1415,18 @@ class TaskInstance(Base, LoggingMixin):
         """Prepare Task for Execution"""
         from airflow.models.renderedtifields import RenderedTaskInstanceFields
 
+        parent_pid = os.getpid()
+
         def signal_handler(signum, frame):
+            pid = os.getpid()
+
+            # If a task forks during execution (from DAG code) for whatever
+            # reason, we want to make sure that we react to the signal only in
+            # the process that we've spawned ourselves (referred to here as the
+            # parent process).
+            if pid != parent_pid:
+                os._exit(1)
+                return
             self.log.error("Received SIGTERM. Terminating subprocesses.")
             self.task.on_kill()
             raise AirflowException("Task received SIGTERM signal")
@@ -1480,40 +1497,48 @@ class TaskInstance(Base, LoggingMixin):
         # If the task has been deferred and is being executed due to a trigger,
         # then we need to pick the right method to come back to, otherwise
         # we go for the default execute
-        execute_callable = task_copy.execute
         if self.next_method:
             # __fail__ is a special signal value for next_method that indicates
             # this task was scheduled specifically to fail.
             if self.next_method == "__fail__":
                 next_kwargs = self.next_kwargs or {}
+                traceback = self.next_kwargs.get("traceback")
+                if traceback is not None:
+                    self.log.error("Trigger failed:\n%s", "\n".join(traceback))
                 raise TaskDeferralError(next_kwargs.get("error", "Unknown"))
             # Grab the callable off the Operator/Task and add in any kwargs
             execute_callable = getattr(task_copy, self.next_method)
             if self.next_kwargs:
                 execute_callable = partial(execute_callable, **self.next_kwargs)
+        else:
+            execute_callable = task_copy.execute
         # If a timeout is specified for the task, make it fail
         # if it goes beyond
-        if task_copy.execution_timeout:
-            # If we are coming in with a next_method (i.e. from a deferral),
-            # calculate the timeout from our start_date.
-            if self.next_method:
-                timeout_seconds = (
-                    task_copy.execution_timeout - (timezone.utcnow() - self.start_date)
-                ).total_seconds()
+        try:
+            if task_copy.execution_timeout:
+                # If we are coming in with a next_method (i.e. from a deferral),
+                # calculate the timeout from our start_date.
+                if self.next_method:
+                    timeout_seconds = (
+                        task_copy.execution_timeout - (timezone.utcnow() - self.start_date)
+                    ).total_seconds()
+                else:
+                    timeout_seconds = task_copy.execution_timeout.total_seconds()
+                try:
+                    # It's possible we're already timed out, so fast-fail if true
+                    if timeout_seconds <= 0:
+                        raise AirflowTaskTimeout()
+                    # Run task in timeout wrapper
+                    with timeout(timeout_seconds):
+                        result = execute_callable(context=context)
+                except AirflowTaskTimeout:
+                    task_copy.on_kill()
+                    raise
             else:
-                timeout_seconds = task_copy.execution_timeout.total_seconds()
-            try:
-                # It's possible we're already timed out, so fast-fail if true
-                if timeout_seconds <= 0:
-                    raise AirflowTaskTimeout()
-                # Run task in timeout wrapper
-                with timeout(timeout_seconds):
-                    result = execute_callable(context=context)
-            except AirflowTaskTimeout:
-                task_copy.on_kill()
-                raise
-        else:
-            result = execute_callable(context=context)
+                result = execute_callable(context=context)
+        except:  # noqa: E722
+            _TASK_EXECUTION_FRAME_LOCAL_STORAGE.frame = currentframe()
+            raise
         # If the task returns a result, push an XCom containing it
         if task_copy.do_xcom_push and result is not None:
             self.xcom_push(key=XCOM_RETURN_KEY, value=result)
@@ -1700,6 +1725,36 @@ class TaskInstance(Base, LoggingMixin):
         session.commit()
         self.log.info('Rescheduling task, marking task as UP_FOR_RESCHEDULE')
 
+    def get_truncated_error_traceback(self, error: BaseException) -> Optional[TracebackType]:
+        """
+        Returns truncated error traceback.
+
+        This method returns traceback of the error truncated to the
+        frame saved by earlier try/except along the way. If the frame
+        is found, the traceback will be truncated to below the frame.
+
+        :param error: exception to get traceback from
+        :return: traceback to print
+        """
+        tb = error.__traceback__
+        try:
+            execution_frame = _TASK_EXECUTION_FRAME_LOCAL_STORAGE.frame
+        except AttributeError:
+            self.log.warning(
+                "We expected to get frame set in local storage but it was not."
+                " Please report this as an issue with full logs"
+                " at https://github.com/apache/airflow/issues/new",
+                exc_info=True,
+            )
+            return tb
+        _TASK_EXECUTION_FRAME_LOCAL_STORAGE.frame = None
+        while tb is not None:
+            if tb.tb_frame is execution_frame:
+                tb = tb.tb_next
+                break
+            tb = tb.tb_next
+        return tb or error.__traceback__
+
     @provide_session
     def handle_failure(
         self,
@@ -1715,7 +1770,8 @@ class TaskInstance(Base, LoggingMixin):
 
         if error:
             if isinstance(error, Exception):
-                self.log.error("Task failed with exception", exc_info=error)
+                tb = self.get_truncated_error_traceback(error)
+                self.log.error("Task failed with exception", exc_info=(type(error), error, tb))
             else:
                 self.log.error("%s", error)
             # external monitoring process provides pickle file so _run_raw_task
