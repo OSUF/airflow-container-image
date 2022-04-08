@@ -7,14 +7,14 @@ USER root
 # Change necessary to connect to SQL server
 RUN sed -i 's/SECLEVEL=2/SECLEVEL=1/g' /etc/ssl/openssl.cnf
 
-COPY docker-context-files-osuf /docker-context-files-osuf
-RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files-osuf/*.deb
-RUN if [[ -f /docker-context-files-osuf/chromedriver ]]; then \
-        cp /docker-context-files-osuf/chromedriver "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
+COPY docker-context-files /docker-context-files
+RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
+RUN if [[ -f /docker-context-files/chromedriver ]]; then \
+        cp /docker-context-files/chromedriver "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
         chmod a+x "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
     fi;
-RUN if [[ -f /docker-context-files-osuf/azcopy ]]; then \
-        cp /docker-context-files-osuf/azcopy "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
+RUN if [[ -f /docker-context-files/azcopy ]]; then \
+        cp /docker-context-files/azcopy "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
         chmod a+x "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
     fi;
-RUN rm -Rf /docker-context-files-osuf
+RUN rm -Rf /docker-context-files
