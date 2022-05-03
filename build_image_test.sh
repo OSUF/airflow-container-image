@@ -7,7 +7,7 @@ CMD1=(
     --build-arg INSTALL_MYSQL_CLIENT="false"
     --build-arg ADDITIONAL_RUNTIME_APT_DEPS="sshpass"
     # --tag "osufcontainerregistry.azurecr.io/airflow:latest"
-    --tag "airflow-intermediate:test"
+    --tag "airflow-intermediate:latest"
 )
 CMD2=(
     docker build --file Dockerfile-osuf .
