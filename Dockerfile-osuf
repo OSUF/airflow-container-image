@@ -1,6 +1,8 @@
 ARG AIRFLOW_USER_HOME_DIR=/home/airflow
 
-FROM airflow-intermediate:latest
+ARG ENV=latest
+FROM airflow-intermediate:$ENV
+ARG ENV
 
 USER root
 
