@@ -19,4 +19,13 @@ RUN if [[ -f /docker-context-files/azcopy ]]; then \
         cp /docker-context-files/azcopy "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
         chmod a+x "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
     fi;
+
+USER airflow
+
+RUN if [[ -f /docker-context-files/requirements.txt ]]; then \
+        pip install --no-cache-dir --user -r /docker-context-files/requirements.txt; \
+    fi
+
+USER root
+
 RUN rm -Rf /docker-context-files

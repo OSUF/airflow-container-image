@@ -7,11 +7,13 @@ CMD1=(
     --build-arg INSTALL_MYSQL_CLIENT="false"
     --build-arg ADDITIONAL_RUNTIME_APT_DEPS="sshpass"
     --tag "airflow-intermediate:test"
+    --progress plain
 )
 CMD2=(
     docker build --file Dockerfile-osuf .
     --build-arg ENV="test"
     --tag "osufcontainerregistry.azurecr.io/airflow:test"
+    --progress plain
 )
 
 "${CMD1[@]}" && "${CMD2[@]}" 
