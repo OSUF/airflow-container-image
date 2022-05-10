@@ -1,5 +1,1 @@
-selenium==3.141.0
-requests==2.23.0
-pyodbc==4.0.30
-PyYAML==5.3.1
-msal==1.9.0
+selenium==4.1.5
