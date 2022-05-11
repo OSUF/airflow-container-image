@@ -1,0 +1,31 @@
+ARG AIRFLOW_USER_HOME_DIR=/home/airflow
+
+ARG ENV=latest
+FROM airflow-intermediate:$ENV
+ARG ENV
+
+USER root
+
+# Change necessary to connect to SQL server
+RUN sed -i 's/SECLEVEL=2/SECLEVEL=1/g' /etc/ssl/openssl.cnf
+
+COPY docker-context-files /docker-context-files
+RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
+RUN if [[ -f /docker-context-files/chromedriver ]]; then \
+        cp /docker-context-files/chromedriver "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
+        chmod a+x "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
+    fi;
+RUN if [[ -f /docker-context-files/azcopy ]]; then \
+        cp /docker-context-files/azcopy "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
+        chmod a+x "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
+    fi;
+
+USER airflow
+
+RUN if [[ -f /docker-context-files/requirements.txt ]]; then \
+        pip install --no-cache-dir --user -r /docker-context-files/requirements.txt; \
+    fi
+
+USER root
+
+RUN rm -Rf /docker-context-files
