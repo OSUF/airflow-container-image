@@ -1,2 +1,1 @@
 selenium==4.1.5
-pyodbc==4.0.32
