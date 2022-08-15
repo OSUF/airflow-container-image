@@ -351,6 +351,11 @@ ARG_RUN_BACKWARDS = Arg(
     ),
     action="store_true",
 )
+ARG_TREAT_DAG_AS_REGEX = Arg(
+    ("--treat-dag-as-regex",),
+    help=("if set, dag_id will be treated as regex instead of an exact string"),
+    action="store_true",
+)
 # test_dag
 ARG_SHOW_DAGRUN = Arg(
     ("--show-dagrun",),
@@ -432,6 +437,11 @@ ARG_DB_CLEANUP_TIMESTAMP = Arg(
 ARG_DB_DRY_RUN = Arg(
     ("--dry-run",),
     help="Perform a dry run",
+    action="store_true",
+)
+ARG_DB_SKIP_ARCHIVE = Arg(
+    ("--skip-archive",),
+    help="Don't preserve purged records in an archive table.",
     action="store_true",
 )
 
@@ -661,18 +671,17 @@ ARG_CELERY_HOSTNAME = Arg(
 ARG_UMASK = Arg(
     ("-u", "--umask"),
     help="Set the umask of celery worker in daemon mode",
-    default=conf.get('celery', 'worker_umask'),
 )
 ARG_WITHOUT_MINGLE = Arg(
     ("--without-mingle",),
     default=False,
-    help="Don’t synchronize with other workers at start-up",
+    help="Don't synchronize with other workers at start-up",
     action="store_true",
 )
 ARG_WITHOUT_GOSSIP = Arg(
     ("--without-gossip",),
     default=False,
-    help="Don’t subscribe to other workers events",
+    help="Don't subscribe to other workers events",
     action="store_true",
 )
 
@@ -1130,6 +1139,7 @@ DAGS_COMMANDS = (
             ARG_RESET_DAG_RUN,
             ARG_RERUN_FAILED_TASKS,
             ARG_RUN_BACKWARDS,
+            ARG_TREAT_DAG_AS_REGEX,
         ),
     ),
     ActionCommand(
@@ -1452,6 +1462,7 @@ DB_COMMANDS = (
             ARG_DB_CLEANUP_TIMESTAMP,
             ARG_VERBOSE,
             ARG_YES,
+            ARG_DB_SKIP_ARCHIVE,
         ),
     ),
 )

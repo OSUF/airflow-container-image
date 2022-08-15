@@ -30,6 +30,12 @@ Content
     Python API <_api/airflow/providers/docker/index>
 
 .. toctree::
+    :hidden:
+    :caption: System tests
+
+    System Tests <_api/tests/system/providers/docker/index>
+
+.. toctree::
     :maxdepth: 1
     :caption: Resources
 
@@ -53,7 +59,7 @@ Package apache-airflow-providers-docker
 `Docker <https://docs.docker.com/install/>`__
 
 
-Release: 3.0.0
+Release: 3.1.0
 
 Provider package
 ----------------

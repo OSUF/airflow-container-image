@@ -36,15 +36,16 @@ Content
     Python API <_api/airflow/providers/asana/index>
 
 .. toctree::
-    :maxdepth: 1
-    :caption: Resources
+    :hidden:
+    :caption: System tests
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-asana/2.0.0/tests/system/providers/asana/example_asana.py>
+    System Tests <_api/tests/system/providers/asana/index>
 
 .. toctree::
     :maxdepth: 1
     :caption: Resources
 
+    Example DAGs <https://github.com/apache/airflow/tree/providers-asana/2.0.0/tests/system/providers/asana/example_asana.py>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-asana/>
     Installing from sources <installing-providers-from-sources>
 
@@ -64,7 +65,7 @@ Package apache-airflow-providers-asana
 `Asana <https://app.asana.com/>`__
 
 
-Release: 2.0.0
+Release: 2.0.1
 
 Provider package
 ----------------

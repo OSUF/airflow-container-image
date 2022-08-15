@@ -36,6 +36,12 @@ Content
     Python API <_api/airflow/providers/alibaba/index>
 
 .. toctree::
+    :hidden:
+    :caption: System tests
+
+    System Tests <_api/tests/system/providers/alibaba/index>
+
+.. toctree::
     :maxdepth: 1
     :caption: Resources
 
@@ -56,10 +62,10 @@ Content
 Package apache-airflow-providers-alibaba
 ------------------------------------------------------
 
-Alibaba Cloud integration (including `Alibaba Cloud <https://www.alibabacloud.com>`__).
+Alibaba Cloud integration (including `Alibaba Cloud <https://www.alibabacloud.com//>`__).
 
 
-Release: 2.0.0
+Release: 2.0.1
 
 Provider package
 ----------------

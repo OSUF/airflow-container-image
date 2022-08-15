@@ -36,21 +36,16 @@ Content
     Python API <_api/airflow/providers/github/index>
 
 .. toctree::
+    :hidden:
+    :caption: System tests
+
+    System Tests <_api/tests/system/providers/github/index>
+
+.. toctree::
     :maxdepth: 1
     :caption: Resources
 
     Example DAGs <https://github.com/apache/airflow/tree/providers-github/2.0.0/tests/system/providers/github>
-
-.. toctree::
-    :maxdepth: 1
-    :caption: Resources
-
-    PyPI Repository <https://pypi.org/project/apache-airflow-providers-github/>
-
-.. toctree::
-    :maxdepth: 1
-    :caption: Resources
-
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-github/>
     Installing from sources <installing-providers-from-sources>
 
@@ -76,7 +71,7 @@ Package apache-airflow-providers-github
 `GitHub <https://www.github.com/>`__
 
 
-Release: 2.0.0
+Release: 2.1.0
 
 Provider package
 ----------------

@@ -22,7 +22,7 @@ using docker-containers.
 The following operators are being used: DockerOperator,
 BashOperator & ShortCircuitOperator.
 TODO: Review the workflow, change it accordingly to
-      your environment & enable the code.
+your environment & enable the code.
 """
 import os
 from datetime import datetime
@@ -39,7 +39,7 @@ DAG_ID = 'docker_sample_copy_data'
 
 with models.DAG(
     DAG_ID,
-    schedule_interval="@once",
+    schedule="@once",
     start_date=datetime(2021, 1, 1),
     catchup=False,
     tags=["example", "docker"],

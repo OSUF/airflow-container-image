@@ -31,6 +31,12 @@ Content
     Python API <_api/airflow/providers/tableau/index>
 
 .. toctree::
+    :hidden:
+    :caption: System tests
+
+    System Tests <_api/tests/system/providers/tableau/index>
+
+.. toctree::
     :maxdepth: 1
     :caption: Resources
 
@@ -54,7 +60,7 @@ Package apache-airflow-providers-tableau
 `Tableau <https://www.tableau.com/>`__
 
 
-Release: 3.0.0
+Release: 3.0.1
 
 Provider package
 ----------------

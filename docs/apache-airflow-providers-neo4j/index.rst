@@ -36,15 +36,16 @@ Content
     Python API <_api/airflow/providers/neo4j/index>
 
 .. toctree::
-    :maxdepth: 1
-    :caption: Resources
+    :hidden:
+    :caption: System tests
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-neo4j/3.0.0/tests/system/providers/neo4j>
+    System Tests <_api/tests/system/providers/neo4j/index>
 
 .. toctree::
     :maxdepth: 1
     :caption: Resources
 
+    Example DAGs <https://github.com/apache/airflow/tree/providers-neo4j/3.0.0/tests/system/providers/neo4j>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-neo4j/>
     Installing from sources <installing-providers-from-sources>
 
@@ -64,7 +65,7 @@ Package apache-airflow-providers-neo4j
 `Neo4j <https://neo4j.com/>`__
 
 
-Release: 3.0.0
+Release: 3.1.0
 
 Provider package
 ----------------
