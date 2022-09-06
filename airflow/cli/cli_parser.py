@@ -177,6 +177,9 @@ def string_lower_type(val):
 ARG_DAG_ID = Arg(("dag_id",), help="The id of the dag")
 ARG_TASK_ID = Arg(("task_id",), help="The id of the task")
 ARG_EXECUTION_DATE = Arg(("execution_date",), help="The execution date of the DAG", type=parsedate)
+ARG_EXECUTION_DATE_OPTIONAL = Arg(
+    ("execution_date",), nargs='?', help="The execution date of the DAG (optional)", type=parsedate
+)
 ARG_EXECUTION_DATE_OR_RUN_ID = Arg(
     ('execution_date_or_run_id',), help="The execution_date of the DAG or run_id of the DAGRun"
 )
@@ -254,13 +257,13 @@ ARG_REVISION_RANGE = Arg(
 )
 
 # list_dag_runs
-ARG_DAG_ID_OPT = Arg(("-d", "--dag-id"), help="The id of the dag")
 ARG_NO_BACKFILL = Arg(
     ("--no-backfill",), help="filter all the backfill dagruns given the dag id", action="store_true"
 )
 ARG_STATE = Arg(("--state",), help="Only list the dag runs corresponding to the state")
 
 # list_jobs
+ARG_DAG_ID_OPT = Arg(("-d", "--dag-id"), help="The id of the dag")
 ARG_LIMIT = Arg(("--limit",), help="Return a limited number of records")
 
 # next_execution
@@ -999,7 +1002,7 @@ DAGS_COMMANDS = (
         ),
         func=lazy_load_command('airflow.cli.commands.dag_command.dag_list_dag_runs'),
         args=(
-            ARG_DAG_ID_OPT,
+            ARG_DAG_ID,
             ARG_NO_BACKFILL,
             ARG_STATE,
             ARG_OUTPUT,
@@ -1169,7 +1172,8 @@ DAGS_COMMANDS = (
         func=lazy_load_command('airflow.cli.commands.dag_command.dag_test'),
         args=(
             ARG_DAG_ID,
-            ARG_EXECUTION_DATE,
+            ARG_EXECUTION_DATE_OPTIONAL,
+            ARG_CONF,
             ARG_SUBDIR,
             ARG_SHOW_DAGRUN,
             ARG_IMGCAT_DAGRUN,
@@ -1663,6 +1667,12 @@ ROLES_COMMANDS = (
         name='create',
         help='Create role',
         func=lazy_load_command('airflow.cli.commands.role_command.roles_create'),
+        args=(ARG_ROLES, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name='delete',
+        help='Delete role',
+        func=lazy_load_command('airflow.cli.commands.role_command.roles_delete'),
         args=(ARG_ROLES, ARG_VERBOSE),
     ),
     ActionCommand(

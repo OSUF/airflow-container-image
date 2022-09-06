@@ -18,6 +18,9 @@
 import os
 import shutil
 import sys
+import threading
+from signal import SIGTERM
+from time import sleep
 from typing import Iterable, Optional, Tuple
 
 import click
@@ -46,10 +49,12 @@ from airflow_breeze.utils.common_options import (
     option_forward_credentials,
     option_github_repository,
     option_image_tag_for_running,
+    option_include_mypy_volume,
     option_installation_package_format,
     option_integration,
     option_load_default_connection,
     option_load_example_dags,
+    option_max_time,
     option_mount_sources,
     option_mssql_version,
     option_mysql_version,
@@ -60,6 +65,7 @@ from airflow_breeze.utils.common_options import (
     option_use_packages_from_dist,
     option_verbose,
 )
+from airflow_breeze.utils.confirm import set_forced_answer
 from airflow_breeze.utils.console import get_console
 from airflow_breeze.utils.custom_param_types import BetterChoice, NotVerifiedBetterChoice
 from airflow_breeze.utils.docker_command_utils import (
@@ -68,7 +74,7 @@ from airflow_breeze.utils.docker_command_utils import (
     get_extra_docker_flags,
     perform_environment_checks,
 )
-from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT
+from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT, create_mypy_volume_if_needed
 from airflow_breeze.utils.run_utils import (
     RunCommandResult,
     assert_pre_commit_installed,
@@ -84,6 +90,18 @@ from airflow_breeze.utils.visuals import ASCIIART, ASCIIART_STYLE, CHEATSHEET, C
 # Is used for a shorthand of shell and except the extra
 # Args it should have the same parameters.
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+class TimerThread(threading.Thread):
+    def __init__(self, max_time: int):
+        super().__init__(daemon=True)
+        self.max_time = max_time
+
+    def run(self):
+        get_console().print(f"[info]Setting timer to fail after {self.max_time} s.")
+        sleep(self.max_time)
+        get_console().print(f"[error]The command took longer than {self.max_time} s. Failing!")
+        os.killpg(os.getpgid(0), SIGTERM)
 
 
 @main.command()
@@ -108,6 +126,8 @@ from airflow_breeze.utils.visuals import ASCIIART, ASCIIART_STYLE, CHEATSHEET, C
 @option_db_reset
 @option_image_tag_for_running
 @option_answer
+@option_max_time
+@option_include_mypy_volume
 @click.argument('extra-args', nargs=-1, type=click.UNPROCESSED)
 def shell(
     verbose: bool,
@@ -128,7 +148,9 @@ def shell(
     airflow_constraints_reference: str,
     force_build: bool,
     db_reset: bool,
+    include_mypy_volume: bool,
     answer: Optional[str],
+    max_time: Optional[int],
     image_tag: Optional[str],
     platform: Optional[str],
     extra_args: Tuple,
@@ -137,6 +159,9 @@ def shell(
     if verbose or dry_run:
         get_console().print("\n[success]Welcome to breeze.py[/]\n")
         get_console().print(f"\n[success]Root of Airflow Sources = {AIRFLOW_SOURCES_ROOT}[/]\n")
+    if max_time:
+        TimerThread(max_time=max_time).start()
+        set_forced_answer('yes')
     enter_shell(
         verbose=verbose,
         dry_run=dry_run,
@@ -156,7 +181,8 @@ def shell(
         package_format=package_format,
         force_build=force_build,
         db_reset=db_reset,
-        extra_args=extra_args,
+        include_mypy_volume=include_mypy_volume,
+        extra_args=extra_args if not max_time else "exit",
         answer=answer,
         image_tag=image_tag,
         platform=platform,
@@ -402,7 +428,8 @@ def static_checks(
         env=env,
     )
     if static_checks_result.returncode != 0:
-        get_console().print("[error]There were errors during pre-commit check. They should be fixed[/]")
+        if os.environ.get('CI'):
+            get_console().print("[error]There were errors during pre-commit check. They should be fixed[/]")
     sys.exit(static_checks_result.returncode)
 
 
@@ -499,8 +526,9 @@ def enter_shell(**kwargs) -> RunCommandResult:
     if read_from_cache_file('suppress_cheatsheet') is None:
         get_console().print(CHEATSHEET, style=CHEATSHEET_STYLE)
     enter_shell_params = ShellParams(**filter_out_none(**kwargs))
-    enter_shell_params.include_mypy_volume = True
     rebuild_or_pull_ci_image_if_needed(command_params=enter_shell_params, dry_run=dry_run, verbose=verbose)
+    if enter_shell_params.include_mypy_volume:
+        create_mypy_volume_if_needed()
     return run_shell(verbose, dry_run, enter_shell_params)
 
 
