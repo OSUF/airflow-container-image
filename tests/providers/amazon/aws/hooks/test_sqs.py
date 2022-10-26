@@ -15,7 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
+from __future__ import annotations
 
 import unittest
 
@@ -27,9 +27,9 @@ except ImportError:
     mock_sqs = None
 
 
-@unittest.skipIf(mock_sqs is None, 'moto sqs package missing')
+@unittest.skipIf(mock_sqs is None, "moto sqs package missing")
 class TestSqsHook(unittest.TestCase):
     @mock_sqs
     def test_get_conn(self):
-        hook = SqsHook(aws_conn_id='aws_default')
+        hook = SqsHook(aws_conn_id="aws_default")
         assert hook.get_conn() is not None

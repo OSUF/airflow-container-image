@@ -16,8 +16,10 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Google Cloud Functions Hook."""
+from __future__ import annotations
+
 import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Optional, Sequence
 
 import requests
 from googleapiclient.discovery import build
@@ -43,8 +45,8 @@ class CloudFunctionsHook(GoogleBaseHook):
         self,
         api_version: str,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
     ) -> None:
         super().__init__(
             gcp_conn_id=gcp_conn_id,
@@ -63,7 +65,7 @@ class CloudFunctionsHook(GoogleBaseHook):
         :param location: The location where the function is created.
         :return:
         """
-        return f'projects/{project_id}/locations/{location}'
+        return f"projects/{project_id}/locations/{location}"
 
     def get_conn(self) -> build:
         """
@@ -75,7 +77,7 @@ class CloudFunctionsHook(GoogleBaseHook):
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
-                'cloudfunctions', self.api_version, http=http_authorized, cache_discovery=False
+                "cloudfunctions", self.api_version, http=http_authorized, cache_discovery=False
             )
         return self._conn
 
@@ -112,7 +114,7 @@ class CloudFunctionsHook(GoogleBaseHook):
         operation_name = response["name"]
         self._wait_for_operation_to_complete(operation_name=operation_name)
 
-    def update_function(self, name: str, body: dict, update_mask: List[str]) -> None:
+    def update_function(self, name: str, body: dict, update_mask: list[str]) -> None:
         """
         Updates Cloud Functions according to the specified update mask.
 
@@ -151,8 +153,8 @@ class CloudFunctionsHook(GoogleBaseHook):
             ).execute(num_retries=self.num_retries)
         # fmt: on
 
-        upload_url = response.get('uploadUrl')
-        with open(zip_path, 'rb') as file:
+        upload_url = response.get("uploadUrl")
+        with open(zip_path, "rb") as file:
             requests.put(
                 url=upload_url,
                 data=file,
@@ -160,8 +162,8 @@ class CloudFunctionsHook(GoogleBaseHook):
                 # https://cloud.google.com/functions/docs/reference/rest/v1/projects.locations.functions/generateUploadUrl
                 # nopep8
                 headers={
-                    'Content-type': 'application/zip',
-                    'x-goog-content-length-range': '0,104857600',
+                    "Content-type": "application/zip",
+                    "x-goog-content-length-range": "0,104857600",
                 },
             )
         return upload_url
@@ -184,7 +186,7 @@ class CloudFunctionsHook(GoogleBaseHook):
     def call_function(
         self,
         function_id: str,
-        input_data: Dict,
+        input_data: dict,
         location: str,
         project_id: str = PROVIDE_PROJECT_ID,
     ) -> dict:
@@ -206,8 +208,8 @@ class CloudFunctionsHook(GoogleBaseHook):
             body=input_data
         ).execute(num_retries=self.num_retries)
         # fmt: on
-        if 'error' in response:
-            raise AirflowException(response['error'])
+        if "error" in response:
+            raise AirflowException(response["error"])
         return response
 
     def _wait_for_operation_to_complete(self, operation_name: str) -> dict:

@@ -15,9 +15,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
+from __future__ import annotations
+
 import warnings
-from typing import IO, Any, Dict, List, Optional
+from typing import IO, Any
 
 from azure.storage.file import File, FileService
 
@@ -35,17 +36,17 @@ class AzureFileShareHook(BaseHook):
     """
 
     conn_name_attr = "azure_fileshare_conn_id"
-    default_conn_name = 'azure_fileshare_default'
-    conn_type = 'azure_fileshare'
-    hook_name = 'Azure FileShare'
+    default_conn_name = "azure_fileshare_default"
+    conn_type = "azure_fileshare"
+    hook_name = "Azure FileShare"
 
-    def __init__(self, azure_fileshare_conn_id: str = 'azure_fileshare_default') -> None:
+    def __init__(self, azure_fileshare_conn_id: str = "azure_fileshare_default") -> None:
         super().__init__()
         self.conn_id = azure_fileshare_conn_id
         self._conn = None
 
     @staticmethod
-    def get_connection_form_widgets() -> Dict[str, Any]:
+    def get_connection_form_widgets() -> dict[str, Any]:
         """Returns connection widgets to add to connection form"""
         from flask_appbuilder.fieldwidgets import BS3PasswordFieldWidget, BS3TextFieldWidget
         from flask_babel import lazy_gettext
@@ -53,31 +54,31 @@ class AzureFileShareHook(BaseHook):
 
         return {
             "extra__azure_fileshare__sas_token": PasswordField(
-                lazy_gettext('SAS Token (optional)'), widget=BS3PasswordFieldWidget()
+                lazy_gettext("SAS Token (optional)"), widget=BS3PasswordFieldWidget()
             ),
             "extra__azure_fileshare__connection_string": StringField(
-                lazy_gettext('Connection String (optional)'), widget=BS3TextFieldWidget()
+                lazy_gettext("Connection String (optional)"), widget=BS3TextFieldWidget()
             ),
             "extra__azure_fileshare__protocol": StringField(
-                lazy_gettext('Account URL or token (optional)'), widget=BS3TextFieldWidget()
+                lazy_gettext("Account URL or token (optional)"), widget=BS3TextFieldWidget()
             ),
         }
 
     @staticmethod
-    def get_ui_field_behaviour() -> Dict[str, Any]:
+    def get_ui_field_behaviour() -> dict[str, Any]:
         """Returns custom field behaviour"""
         return {
-            "hidden_fields": ['schema', 'port', 'host', 'extra'],
+            "hidden_fields": ["schema", "port", "host", "extra"],
             "relabeling": {
-                'login': 'Blob Storage Login (optional)',
-                'password': 'Blob Storage Key (optional)',
+                "login": "Blob Storage Login (optional)",
+                "password": "Blob Storage Key (optional)",
             },
             "placeholders": {
-                'login': 'account name',
-                'password': 'secret',
-                'extra__azure_fileshare__sas_token': 'account url or token (optional)',
-                'extra__azure_fileshare__connection_string': 'account url or token (optional)',
-                'extra__azure_fileshare__protocol': 'account url or token (optional)',
+                "login": "account name",
+                "password": "secret",
+                "extra__azure_fileshare__sas_token": "account url or token (optional)",
+                "extra__azure_fileshare__connection_string": "account url or token (optional)",
+                "extra__azure_fileshare__protocol": "account url or token (optional)",
             },
         }
 
@@ -93,7 +94,7 @@ class AzureFileShareHook(BaseHook):
             # in case dedicated FileShareHook is used, the connection will use the extras from UI.
             # in case deprecated wasb hook is used, the old extras will work as well
             if key.startswith(prefix):
-                if value != '':
+                if value != "":
                     service_options[key[len(prefix) :]] = value
                 else:
                     # warn if the deprecated wasb_connection is used
@@ -141,7 +142,7 @@ class AzureFileShareHook(BaseHook):
         return self.get_conn().exists(share_name, directory_name, file_name, **kwargs)
 
     def list_directories_and_files(
-        self, share_name: str, directory_name: Optional[str] = None, **kwargs
+        self, share_name: str, directory_name: str | None = None, **kwargs
     ) -> list:
         """
         Return the list of directories and files stored on a Azure File Share.
@@ -155,7 +156,7 @@ class AzureFileShareHook(BaseHook):
         """
         return self.get_conn().list_directories_and_files(share_name, directory_name, **kwargs)
 
-    def list_files(self, share_name: str, directory_name: Optional[str] = None, **kwargs) -> List[str]:
+    def list_files(self, share_name: str, directory_name: str | None = None, **kwargs) -> list[str]:
         """
         Return the list of files stored on a Azure File Share.
 

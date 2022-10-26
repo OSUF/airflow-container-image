@@ -20,6 +20,8 @@ This is an example dag that performs two refresh operations on a Tableau Workboo
 waits until it succeeds. The second does not wait since this is an asynchronous operation and we don't know
 when the operation actually finishes. That's why we have another task that checks only that.
 """
+from __future__ import annotations
+
 import os
 from datetime import datetime, timedelta
 
@@ -35,31 +37,31 @@ with DAG(
     dagrun_timeout=timedelta(hours=2),
     schedule=None,
     start_date=datetime(2021, 1, 1),
-    default_args={'site_id': 'my_site'},
-    tags=['example'],
+    default_args={"site_id": "my_site"},
+    tags=["example"],
 ) as dag:
     # Refreshes a workbook and waits until it succeeds.
     task_refresh_workbook_blocking = TableauOperator(
-        resource='workbooks',
-        method='refresh',
-        find='MyWorkbook',
-        match_with='name',
+        resource="workbooks",
+        method="refresh",
+        find="MyWorkbook",
+        match_with="name",
         blocking_refresh=True,
-        task_id='refresh_tableau_workbook_blocking',
+        task_id="refresh_tableau_workbook_blocking",
     )
     # Refreshes a workbook and does not wait until it succeeds.
     task_refresh_workbook_non_blocking = TableauOperator(
-        resource='workbooks',
-        method='refresh',
-        find='MyWorkbook',
-        match_with='name',
+        resource="workbooks",
+        method="refresh",
+        find="MyWorkbook",
+        match_with="name",
         blocking_refresh=False,
-        task_id='refresh_tableau_workbook_non_blocking',
+        task_id="refresh_tableau_workbook_non_blocking",
     )
     # The following task queries the status of the workbook refresh job until it succeeds.
     task_check_job_status = TableauJobStatusSensor(
         job_id=task_refresh_workbook_non_blocking.output,
-        task_id='check_tableau_job_status',
+        task_id="check_tableau_job_status",
     )
 
     # Task dependency created via XComArgs:

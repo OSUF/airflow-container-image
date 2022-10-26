@@ -15,13 +15,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-import unittest
+from __future__ import annotations
 
 from airflow.utils.decorators import remove_task_decorator
 
 
-class TestExternalPythonDecorator(unittest.TestCase):
+class TestExternalPythonDecorator:
     def test_remove_task_decorator(self):
         py_source = "@task.external_python(use_dill=True)\ndef f():\nimport funcsigs"
         res = remove_task_decorator(python_source=py_source, task_decorator_name="@task.external_python")

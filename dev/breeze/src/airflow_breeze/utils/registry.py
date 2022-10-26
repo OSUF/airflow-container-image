@@ -14,8 +14,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import os
-from typing import Optional, Tuple
 
 from airflow_breeze.params.common_build_params import CommonBuildParams
 from airflow_breeze.utils.console import Output, get_console
@@ -23,8 +24,8 @@ from airflow_breeze.utils.run_utils import run_command
 
 
 def login_to_github_docker_registry(
-    image_params: CommonBuildParams, output: Optional[Output], dry_run: bool, verbose: bool
-) -> Tuple[int, str]:
+    image_params: CommonBuildParams, output: Output | None, dry_run: bool, verbose: bool
+) -> tuple[int, str]:
     """
     In case of CI environment, we need to login to GitHub Registry.
 
@@ -40,7 +41,7 @@ def login_to_github_docker_registry(
             )
         elif len(image_params.github_token) > 0:
             run_command(
-                ['docker', 'logout', 'ghcr.io'],
+                ["docker", "logout", "ghcr.io"],
                 dry_run=dry_run,
                 verbose=verbose,
                 output=output,
@@ -49,12 +50,12 @@ def login_to_github_docker_registry(
             )
             command_result = run_command(
                 [
-                    'docker',
-                    'login',
-                    '--username',
+                    "docker",
+                    "login",
+                    "--username",
                     image_params.github_username,
-                    '--password-stdin',
-                    'ghcr.io',
+                    "--password-stdin",
+                    "ghcr.io",
                 ],
                 verbose=verbose,
                 output=output,
@@ -64,5 +65,5 @@ def login_to_github_docker_registry(
             )
             return command_result.returncode, "Docker login"
         else:
-            get_console().print('\n[info]Skip Login to GitHub Container Registry as token is missing')
+            get_console().print("\n[info]Skip Login to GitHub Container Registry as token is missing")
     return 0, "Docker login skipped"

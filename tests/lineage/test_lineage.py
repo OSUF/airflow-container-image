@@ -15,6 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 from unittest import mock
 
 from airflow.lineage import AUTO, apply_lineage, get_backend, prepare_lineage
@@ -44,18 +46,18 @@ class TestLineage:
         file2 = File(f2s.format("{{ ds }}"))
         file3 = File(f3s)
 
-        with dag_maker(dag_id='test_prepare_lineage', start_date=DEFAULT_DATE) as dag:
+        with dag_maker(dag_id="test_prepare_lineage", start_date=DEFAULT_DATE) as dag:
             op1 = EmptyOperator(
-                task_id='leave1',
+                task_id="leave1",
                 inlets=file1,
                 outlets=[
                     file2,
                 ],
             )
-            op2 = EmptyOperator(task_id='leave2')
-            op3 = EmptyOperator(task_id='upstream_level_1', inlets=AUTO, outlets=file3)
-            op4 = EmptyOperator(task_id='upstream_level_2')
-            op5 = EmptyOperator(task_id='upstream_level_3', inlets=["leave1", "upstream_level_1"])
+            op2 = EmptyOperator(task_id="leave2")
+            op3 = EmptyOperator(task_id="upstream_level_1", inlets=AUTO, outlets=file3)
+            op4 = EmptyOperator(task_id="upstream_level_2")
+            op5 = EmptyOperator(task_id="upstream_level_3", inlets=["leave1", "upstream_level_1"])
 
             op1.set_downstream(op3)
             op2.set_downstream(op3)
@@ -103,8 +105,8 @@ class TestLineage:
     def test_lineage_render(self, dag_maker):
         # tests inlets / outlets are rendered if they are added
         # after initialization
-        with dag_maker(dag_id='test_lineage_render', start_date=DEFAULT_DATE):
-            op1 = EmptyOperator(task_id='task1')
+        with dag_maker(dag_id="test_lineage_render", start_date=DEFAULT_DATE):
+            op1 = EmptyOperator(task_id="task1")
         dag_run = dag_maker.create_dagrun(run_type=DagRunType.SCHEDULED)
 
         f1s = "/tmp/does_not_exist_1-{}"
@@ -129,12 +131,12 @@ class TestLineage:
         f3s = "/tmp/does_not_exist_3"
         file3 = File(f3s)
 
-        with dag_maker(dag_id='test_prepare_lineage'):
+        with dag_maker(dag_id="test_prepare_lineage"):
             op1 = EmptyOperator(
-                task_id='leave1',
+                task_id="leave1",
                 outlets=[a, file3],
             )
-            op2 = EmptyOperator(task_id='leave2', inlets='auto')
+            op2 = EmptyOperator(task_id="leave2", inlets="auto")
 
             op1 >> op2
 
@@ -159,12 +161,12 @@ class TestLineage:
                 assert len(outlets) == 1
 
         func = mock.Mock()
-        func.__name__ = 'foo'
+        func.__name__ = "foo"
 
         mock_get_backend.return_value = TestBackend()
 
-        with dag_maker(dag_id='test_lineage_is_sent_to_backend', start_date=DEFAULT_DATE):
-            op1 = EmptyOperator(task_id='task1')
+        with dag_maker(dag_id="test_lineage_is_sent_to_backend", start_date=DEFAULT_DATE):
+            op1 = EmptyOperator(task_id="task1")
         dag_run = dag_maker.create_dagrun(run_type=DagRunType.SCHEDULED)
 
         file1 = File("/tmp/some_file")

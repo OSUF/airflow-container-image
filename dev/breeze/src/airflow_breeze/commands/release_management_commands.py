@@ -14,12 +14,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import shlex
 import sys
 import time
 from copy import deepcopy
 from re import match
-from typing import IO, Dict, List, Optional, Tuple
+from typing import IO
 
 import click
 
@@ -42,6 +44,7 @@ from airflow_breeze.utils.common_options import (
     option_airflow_constraints_reference,
     option_airflow_extras,
     option_answer,
+    option_debug_resources,
     option_dry_run,
     option_github_repository,
     option_image_tag_for_running,
@@ -65,7 +68,12 @@ from airflow_breeze.utils.docker_command_utils import (
     get_extra_docker_flags,
     perform_environment_checks,
 )
-from airflow_breeze.utils.parallel import check_async_run_results, run_with_pool
+from airflow_breeze.utils.parallel import (
+    GenericRegexpProgressMatcher,
+    SummarizeAfter,
+    check_async_run_results,
+    run_with_pool,
+)
 from airflow_breeze.utils.python_versions import get_python_version_list
 from airflow_breeze.utils.run_utils import (
     RunCommandResult,
@@ -78,13 +86,13 @@ option_debug_release_management = click.option(
     "--debug",
     is_flag=True,
     help="Drop user in shell instead of running the command. Useful for debugging.",
-    envvar='DEBUG',
+    envvar="DEBUG",
 )
 
 
 def run_with_debug(
     params: ShellParams,
-    command: List[str],
+    command: list[str],
     verbose: bool,
     dry_run: bool,
     debug: bool,
@@ -107,7 +115,7 @@ def run_with_debug(
         params.airflow_image_name_with_tag,
     ]
     if debug:
-        cmd_string = ' '.join([shlex.quote(s) for s in command if s != "-c"])
+        cmd_string = " ".join([shlex.quote(s) for s in command if s != "-c"])
         base_command.extend(
             [
                 "-c",
@@ -141,7 +149,7 @@ echo -e '\\e[34mRun this command to debug:
 
 @click.group(
     cls=BreezeGroup,
-    name='release-management',
+    name="release-management",
     help="Tools that release managers can use to prepare and manage Airflow releases",
 )
 def release_management():
@@ -149,7 +157,7 @@ def release_management():
 
 
 @release_management.command(
-    name='prepare-airflow-package',
+    name="prepare-airflow-package",
     help="Prepare sdist/whl package of Airflow.",
 )
 @option_verbose
@@ -168,7 +176,7 @@ def prepare_airflow_packages(
 ):
     perform_environment_checks(verbose=verbose)
     assert_pre_commit_installed(verbose=verbose)
-    run_compile_www_assets(dev=False, verbose=verbose, dry_run=dry_run)
+    run_compile_www_assets(dev=False, run_in_background=False, verbose=verbose, dry_run=dry_run)
     shell_params = ShellParams(
         verbose=verbose,
         github_repository=github_repository,
@@ -191,11 +199,16 @@ def prepare_airflow_packages(
 
 
 @release_management.command(
-    name='prepare-provider-documentation',
+    name="prepare-provider-documentation",
     help="Prepare CHANGELOG, README and COMMITS information for providers.",
 )
 @option_verbose
 @option_dry_run
+@click.option(
+    "--base-branch",
+    type=str,
+    default="main",
+)
 @option_github_repository
 @option_answer
 @option_debug_release_management
@@ -203,10 +216,11 @@ def prepare_airflow_packages(
 def prepare_provider_documentation(
     verbose: bool,
     dry_run: bool,
+    base_branch: str,
     github_repository: str,
-    answer: Optional[str],
+    answer: str | None,
     debug: bool,
-    packages: List[str],
+    packages: list[str],
 ):
     perform_environment_checks(verbose=verbose)
     shell_params = ShellParams(
@@ -215,6 +229,7 @@ def prepare_provider_documentation(
         github_repository=github_repository,
         python=DEFAULT_PYTHON_MAJOR_MINOR_VERSION,
         answer=answer,
+        base_branch=base_branch,
         skip_environment_initialization=True,
     )
     rebuild_or_pull_ci_image_if_needed(command_params=shell_params, dry_run=dry_run, verbose=verbose)
@@ -222,7 +237,7 @@ def prepare_provider_documentation(
     result_command = run_with_debug(
         params=shell_params,
         command=cmd_to_run,
-        enable_input=not answer or answer.lower() not in ['y', 'yes'],
+        enable_input=not answer or answer.lower() not in ["y", "yes"],
         verbose=verbose,
         dry_run=dry_run,
         debug=debug,
@@ -231,7 +246,7 @@ def prepare_provider_documentation(
 
 
 @release_management.command(
-    name='prepare-provider-packages',
+    name="prepare-provider-packages",
     help="Prepare sdist/whl packages of Airflow Providers.",
 )
 @option_verbose
@@ -240,9 +255,9 @@ def prepare_provider_documentation(
 @option_package_format
 @option_version_suffix_for_pypi
 @click.option(
-    '--package-list-file',
-    type=click.File('rt'),
-    help='Read list of packages from text file (one package per line)',
+    "--package-list-file",
+    type=click.File("rt"),
+    help="Read list of packages from text file (one package per line).",
 )
 @option_debug_release_management
 @argument_packages
@@ -254,7 +269,7 @@ def prepare_provider_packages(
     version_suffix_for_pypi: str,
     package_list_file: IO,
     debug: bool,
-    packages: Tuple[str, ...],
+    packages: tuple[str, ...],
 ):
     perform_environment_checks(verbose=verbose)
     packages_list = list(packages)
@@ -286,8 +301,8 @@ def run_generate_constraints(
     dry_run: bool,
     verbose: bool,
     debug: bool,
-    output: Optional[Output],
-) -> Tuple[int, str]:
+    output: Output | None,
+) -> tuple[int, str]:
     cmd_to_run = [
         "/opt/airflow/scripts/in_container/run_generate_constraints.sh",
     ]
@@ -305,12 +320,18 @@ def run_generate_constraints(
     )
 
 
+CONSTRAINT_PROGRESS_MATCHER = (
+    r"Found|Uninstalling|uninstalled|Collecting|Downloading|eta|Running|Installing|built|Attempting"
+)
+
+
 def run_generate_constraints_in_parallel(
-    shell_params_list: List[ShellParams],
-    python_version_list: List[str],
+    shell_params_list: list[ShellParams],
+    python_version_list: list[str],
     include_success_outputs: bool,
     parallelism: int,
     skip_cleanup: bool,
+    debug_resources: bool,
     dry_run: bool,
     verbose: bool,
 ):
@@ -320,7 +341,14 @@ def run_generate_constraints_in_parallel(
             f"Constraints {shell_params.airflow_constraints_mode}:{shell_params.python}"
             for shell_params in shell_params_list
         ]
-        with run_with_pool(parallelism=parallelism, all_params=all_params) as (pool, outputs):
+        with run_with_pool(
+            parallelism=parallelism,
+            all_params=all_params,
+            debug_resources=debug_resources,
+            progress_matcher=GenericRegexpProgressMatcher(
+                regexp=CONSTRAINT_PROGRESS_MATCHER, lines_to_search=6
+            ),
+        ) as (pool, outputs):
             results = [
                 pool.apply_async(
                     run_generate_constraints,
@@ -340,11 +368,13 @@ def run_generate_constraints_in_parallel(
         outputs=outputs,
         include_success_outputs=include_success_outputs,
         skip_cleanup=skip_cleanup,
+        summarize_on_ci=SummarizeAfter.SUCCESS,
+        summary_start_regexp=".*Constraints generated in.*",
     )
 
 
 @release_management.command(
-    name='generate-constraints',
+    name="generate-constraints",
     help="Generates pinned constraint files with all extras from setup.py in parallel.",
 )
 @option_verbose
@@ -354,6 +384,7 @@ def run_generate_constraints_in_parallel(
 @option_run_in_parallel
 @option_parallelism
 @option_skip_cleanup
+@option_debug_resources
 @option_python_versions
 @option_image_tag_for_running
 @option_answer
@@ -367,9 +398,10 @@ def generate_constraints(
     run_in_parallel: bool,
     parallelism: int,
     skip_cleanup: bool,
+    debug_resources: bool,
     python_versions: str,
-    image_tag: Optional[str],
-    answer: Optional[str],
+    image_tag: str | None,
+    answer: str | None,
     debug: bool,
     airflow_constraints_mode: str,
 ):
@@ -418,6 +450,7 @@ def generate_constraints(
             shell_params_list=shell_params_list,
             parallelism=parallelism,
             skip_cleanup=skip_cleanup,
+            debug_resources=debug_resources,
             include_success_outputs=True,
             dry_run=dry_run,
             verbose=verbose,
@@ -445,7 +478,7 @@ def generate_constraints(
 
 
 @release_management.command(
-    name='verify-provider-packages',
+    name="verify-provider-packages",
     help="Verifies if all provider code is following expectations for providers.",
 )
 @option_use_airflow_version
@@ -455,7 +488,7 @@ def generate_constraints(
     "--skip-constraints",
     is_flag=True,
     help="Do not use constraints when installing providers.",
-    envvar='SKIP_CONSTRAINTS',
+    envvar="SKIP_CONSTRAINTS",
 )
 @option_use_packages_from_dist
 @option_installation_package_format
@@ -466,7 +499,7 @@ def generate_constraints(
 def verify_provider_packages(
     verbose: bool,
     dry_run: bool,
-    use_airflow_version: Optional[str],
+    use_airflow_version: str | None,
     airflow_constraints_reference: str,
     skip_constraints: bool,
     airflow_extras: str,
@@ -503,11 +536,11 @@ def verify_provider_packages(
     sys.exit(result_command.returncode)
 
 
-def convert_build_args_dict_to_array_of_args(build_args: Dict[str, str]) -> List[str]:
+def convert_build_args_dict_to_array_of_args(build_args: dict[str, str]) -> list[str]:
     array_of_args = []
     for key, value in build_args.items():
         array_of_args.append("--build-arg")
-        array_of_args.append(f'{key}={value}')
+        array_of_args.append(f"{key}={value}")
     return array_of_args
 
 
@@ -523,33 +556,33 @@ def alias_image(image_from: str, image_to: str, dry_run: bool, verbose: bool):
 @release_management.command(
     name="release-prod-images", help="Release production images to DockerHub (needs DockerHub permissions)."
 )
-@click.option('--airflow-version', required=True, help="Airflow version to release (2.3.0, 2.3.0rc1 etc.)")
+@click.option("--airflow-version", required=True, help="Airflow version to release (2.3.0, 2.3.0rc1 etc.)")
 @click.option(
-    '--dockerhub-repo',
+    "--dockerhub-repo",
     default=APACHE_AIRFLOW_GITHUB_REPOSITORY,
     show_default=True,
     help="DockerHub repository for the images",
 )
 @click.option(
-    '--slim-images',
+    "--slim-images",
     is_flag=True,
-    help='Whether to prepare slim images instead of the regular ones.',
+    help="Whether to prepare slim images instead of the regular ones.",
 )
 @click.option(
-    '--limit-python',
+    "--limit-python",
     type=BetterChoice(CURRENT_PYTHON_MAJOR_MINOR_VERSIONS),
     help="Specific python to build slim images for (if not specified - the images are built for all"
     " available python versions)",
 )
 @click.option(
-    '--limit-platform',
+    "--limit-platform",
     type=BetterChoice(ALLOWED_PLATFORMS),
     default=MULTI_PLATFORM,
     show_default=True,
     help="Specific platform to build images for (if not specified, multiplatform images will be built.",
 )
 @click.option(
-    '--skip-latest',
+    "--skip-latest",
     is_flag=True,
     help="Whether to skip publishing the latest images (so that 'latest' images are not updated). "
     "This should only be used if you release image for previous branches. Automatically set when "
@@ -562,7 +595,7 @@ def release_prod_images(
     dockerhub_repo: str,
     slim_images: bool,
     limit_platform: str,
-    limit_python: Optional[str],
+    limit_python: str | None,
     skip_latest: bool,
     verbose: bool,
     dry_run: bool,
@@ -586,7 +619,7 @@ def release_prod_images(
                 "[info]Also tagging the images with latest tags as this is release version.[/]"
             )
     result_docker_buildx = run_command(
-        ["docker", 'buildx', 'version'], check=False, dry_run=dry_run, verbose=verbose
+        ["docker", "buildx", "version"], check=False, dry_run=dry_run, verbose=verbose
     )
     if result_docker_buildx.returncode != 0:
         get_console().print("[error]Docker buildx plugin must be installed to release the images[/]")
@@ -594,7 +627,7 @@ def release_prod_images(
         get_console().print("See https://docs.docker.com/buildx/working-with-buildx/ for installation info.")
         sys.exit(1)
     result_inspect_builder = run_command(
-        ["docker", 'buildx', 'inspect', 'airflow_cache'], check=False, dry_run=dry_run, verbose=verbose
+        ["docker", "buildx", "inspect", "airflow_cache"], check=False, dry_run=dry_run, verbose=verbose
     )
     if result_inspect_builder.returncode != 0:
         get_console().print("[error]Airflow Cache builder must be configured to release the images[/]")
@@ -604,7 +637,7 @@ def release_prod_images(
             " for instructions on setting it up."
         )
         sys.exit(1)
-    result_regctl = run_command(["regctl", 'version'], check=False, dry_run=dry_run, verbose=verbose)
+    result_regctl = run_command(["regctl", "version"], check=False, dry_run=dry_run, verbose=verbose)
     if result_regctl.returncode != 0:
         get_console().print("[error]Regctl must be installed and on PATH to release the images[/]")
         get_console().print()

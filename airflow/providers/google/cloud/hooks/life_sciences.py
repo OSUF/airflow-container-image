@@ -16,9 +16,10 @@
 # specific language governing permissions and limitations
 # under the License.
 """Hook for Google Cloud Life Sciences service"""
+from __future__ import annotations
 
 import time
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Optional, Sequence
 
 import google.api_core.path_template
 from googleapiclient.discovery import build
@@ -58,8 +59,8 @@ class LifeSciencesHook(GoogleBaseHook):
         self,
         api_version: str = "v2beta",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
     ) -> None:
         super().__init__(
             gcp_conn_id=gcp_conn_id,
@@ -98,7 +99,7 @@ class LifeSciencesHook(GoogleBaseHook):
         response = request.execute(num_retries=self.num_retries)
 
         # wait
-        operation_name = response['name']
+        operation_name = response["name"]
         self._wait_for_operation_to_complete(operation_name)
 
         return response
@@ -114,7 +115,7 @@ class LifeSciencesHook(GoogleBaseHook):
         :param location: The location of the project. For example: "us-east1".
         """
         return google.api_core.path_template.expand(
-            'projects/{project}/locations/{location}',
+            "projects/{project}/locations/{location}",
             project=project_id,
             location=location,
         )
@@ -138,7 +139,7 @@ class LifeSciencesHook(GoogleBaseHook):
                 .get(name=operation_name)
                 .execute(num_retries=self.num_retries)
             )
-            self.log.info('Waiting for pipeline operation to complete')
+            self.log.info("Waiting for pipeline operation to complete")
             if operation_response.get("done"):
                 response = operation_response.get("response")
                 error = operation_response.get("error")

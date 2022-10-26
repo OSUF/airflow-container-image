@@ -15,6 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path
@@ -34,7 +36,7 @@ def stable_sort(x):
     return x.casefold(), x
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     inthewild_path = Path(AIRFLOW_SOURCES) / "INTHEWILD.md"
     content = inthewild_path.read_text()
     header = []

@@ -15,13 +15,15 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import json
 import os
 import sys
 from ast import Import, ImportFrom, NodeVisitor, parse
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List
 
 import yaml
 from rich.console import Console
@@ -40,16 +42,16 @@ DEPENDENCIES_JSON_FILE_PATH = AIRFLOW_SOURCES_ROOT / "generated" / "provider_dep
 
 sys.path.insert(0, str(AIRFLOW_SOURCES_ROOT))  # make sure setup is imported from Airflow
 
-warnings: List[str] = []
-errors: List[str] = []
+warnings: list[str] = []
+errors: list[str] = []
 
 CROSS_PROVIDERS_DEPS = "cross-providers-deps"
 DEPS = "deps"
 
-ALL_DEPENDENCIES: Dict[str, Dict[str, List[str]]] = defaultdict(lambda: defaultdict(list))
+ALL_DEPENDENCIES: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
 
-ALL_PROVIDERS: Dict[str, Dict[str, Any]] = defaultdict(lambda: defaultdict())
-ALL_PROVIDER_FILES: List[Path] = []
+ALL_PROVIDERS: dict[str, dict[str, Any]] = defaultdict(lambda: defaultdict())
+ALL_PROVIDER_FILES: list[Path] = []
 
 # Allow AST to parse the files.
 sys.path.append(str(AIRFLOW_SOURCES_ROOT))
@@ -61,18 +63,18 @@ class ImportFinder(NodeVisitor):
     """
 
     def __init__(self) -> None:
-        self.imports: List[str] = []
+        self.imports: list[str] = []
         self.handled_import_exception = List[str]
-        self.tried_imports: List[str] = []
+        self.tried_imports: list[str] = []
 
     def process_import(self, import_name: str) -> None:
         self.imports.append(import_name)
 
-    def get_import_name_from_import_from(self, node: ImportFrom) -> List[str]:
-        import_names: List[str] = []
+    def get_import_name_from_import_from(self, node: ImportFrom) -> list[str]:
+        import_names: list[str] = []
         for alias in node.names:
             name = alias.name
-            fullname = f'{node.module}.{name}' if node.module else name
+            fullname = f"{node.module}.{name}" if node.module else name
             import_names.append(fullname)
         return import_names
 
@@ -81,7 +83,7 @@ class ImportFinder(NodeVisitor):
             self.process_import(alias.name)
 
     def visit_ImportFrom(self, node: ImportFrom):
-        if node.module == '__future__':
+        if node.module == "__future__":
             return
         for fullname in self.get_import_name_from_import_from(node):
             self.process_import(fullname)
@@ -90,7 +92,7 @@ class ImportFinder(NodeVisitor):
 def find_all_providers_and_provider_files():
     for (root, _, filenames) in os.walk(AIRFLOW_PROVIDERS_DIR):
         for filename in filenames:
-            if filename == 'provider.yaml':
+            if filename == "provider.yaml":
                 provider_file = Path(root, filename)
                 provider_name = str(provider_file.parent.relative_to(AIRFLOW_PROVIDERS_DIR)).replace(
                     os.sep, "."
@@ -101,7 +103,7 @@ def find_all_providers_and_provider_files():
                 ALL_PROVIDER_FILES.append(Path(root, filename))
 
 
-def get_provider_id_from_relative_import_or_file(relative_path_or_file: str) -> Optional[str]:
+def get_provider_id_from_relative_import_or_file(relative_path_or_file: str) -> str | None:
     provider_candidate = relative_path_or_file.replace(os.sep, ".").split(".")
     while len(provider_candidate) > 0:
         candidate_provider_id = ".".join(provider_candidate)
@@ -111,7 +113,7 @@ def get_provider_id_from_relative_import_or_file(relative_path_or_file: str) -> 
     return None
 
 
-def get_provider_id_from_import(import_name: str, file_path: Path) -> Optional[str]:
+def get_provider_id_from_import(import_name: str, file_path: Path) -> str | None:
     if not import_name.startswith(AIRFLOW_PROVIDERS_IMPORT_PREFIX):
         # skip silently - it's OK to get non-provider imports
         return None
@@ -122,14 +124,14 @@ def get_provider_id_from_import(import_name: str, file_path: Path) -> Optional[s
     return provider_id
 
 
-def get_imports_from_file(file_path: Path) -> List[str]:
+def get_imports_from_file(file_path: Path) -> list[str]:
     root = parse(file_path.read_text(), file_path.name)
     visitor = ImportFinder()
     visitor.visit(root)
     return visitor.imports
 
 
-def get_provider_id_from_file_name(file_path: Path) -> Optional[str]:
+def get_provider_id_from_file_name(file_path: Path) -> str | None:
     # is_relative_to is only available in Python 3.9 - we should simplify this check when we are Python 3.9+
     try:
         relative_path = file_path.relative_to(AIRFLOW_PROVIDERS_DIR)
@@ -161,7 +163,7 @@ def check_if_different_provider_used(file_path: Path) -> None:
             ALL_DEPENDENCIES[file_provider][CROSS_PROVIDERS_DEPS].append(imported_provider)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     find_all_providers_and_provider_files()
     num_files = len(ALL_PROVIDER_FILES)
     num_providers = len(ALL_PROVIDERS)
@@ -171,7 +173,7 @@ if __name__ == '__main__':
         check_if_different_provider_used(file)
 
     for provider, provider_yaml_content in ALL_PROVIDERS.items():
-        ALL_DEPENDENCIES[provider][DEPS].extend(provider_yaml_content['dependencies'])
+        ALL_DEPENDENCIES[provider][DEPS].extend(provider_yaml_content["dependencies"])
 
     if warnings:
         console.print("[yellow]Warnings!\n")
@@ -183,7 +185,7 @@ if __name__ == '__main__':
         for error in errors:
             console.print(f"[red] {error}")
         console.print(f"[bright_blue]Total: {len(errors)} errors.")
-    unique_sorted_dependencies: Dict[str, Dict[str, List[str]]] = defaultdict(dict)
+    unique_sorted_dependencies: dict[str, dict[str, list[str]]] = defaultdict(dict)
     for key in sorted(ALL_DEPENDENCIES.keys()):
         unique_sorted_dependencies[key][DEPS] = sorted(ALL_DEPENDENCIES[key][DEPS])
         unique_sorted_dependencies[key][CROSS_PROVIDERS_DEPS] = sorted(

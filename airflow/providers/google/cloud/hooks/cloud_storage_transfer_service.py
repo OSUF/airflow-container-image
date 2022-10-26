@@ -16,6 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Google Storage Transfer Service Hook."""
+from __future__ import annotations
 
 import json
 import logging
@@ -23,7 +24,7 @@ import time
 import warnings
 from copy import deepcopy
 from datetime import timedelta
-from typing import List, Optional, Sequence, Set, Union
+from typing import Sequence
 
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
@@ -59,44 +60,44 @@ class GcpTransferOperationStatus:
 ACCESS_KEY_ID = "accessKeyId"
 ALREADY_EXISTING_IN_SINK = "overwriteObjectsAlreadyExistingInSink"
 AWS_ACCESS_KEY = "awsAccessKey"
-AWS_S3_DATA_SOURCE = 'awsS3DataSource'
-BODY = 'body'
-BUCKET_NAME = 'bucketName'
-COUNTERS = 'counters'
-DAY = 'day'
+AWS_S3_DATA_SOURCE = "awsS3DataSource"
+BODY = "body"
+BUCKET_NAME = "bucketName"
+COUNTERS = "counters"
+DAY = "day"
 DESCRIPTION = "description"
-FILTER = 'filter'
-FILTER_JOB_NAMES = 'job_names'
-FILTER_PROJECT_ID = 'project_id'
-GCS_DATA_SINK = 'gcsDataSink'
-GCS_DATA_SOURCE = 'gcsDataSource'
+FILTER = "filter"
+FILTER_JOB_NAMES = "job_names"
+FILTER_PROJECT_ID = "project_id"
+GCS_DATA_SINK = "gcsDataSink"
+GCS_DATA_SOURCE = "gcsDataSource"
 HOURS = "hours"
-HTTP_DATA_SOURCE = 'httpDataSource'
-JOB_NAME = 'name'
-LIST_URL = 'list_url'
-METADATA = 'metadata'
+HTTP_DATA_SOURCE = "httpDataSource"
+JOB_NAME = "name"
+LIST_URL = "list_url"
+METADATA = "metadata"
 MINUTES = "minutes"
-MONTH = 'month'
-NAME = 'name'
-OBJECT_CONDITIONS = 'object_conditions'
-OPERATIONS = 'operations'
-PATH = 'path'
-PROJECT_ID = 'projectId'
-SCHEDULE = 'schedule'
-SCHEDULE_END_DATE = 'scheduleEndDate'
-SCHEDULE_START_DATE = 'scheduleStartDate'
+MONTH = "month"
+NAME = "name"
+OBJECT_CONDITIONS = "object_conditions"
+OPERATIONS = "operations"
+PATH = "path"
+PROJECT_ID = "projectId"
+SCHEDULE = "schedule"
+SCHEDULE_END_DATE = "scheduleEndDate"
+SCHEDULE_START_DATE = "scheduleStartDate"
 SECONDS = "seconds"
 SECRET_ACCESS_KEY = "secretAccessKey"
-START_TIME_OF_DAY = 'startTimeOfDay'
+START_TIME_OF_DAY = "startTimeOfDay"
 STATUS = "status"
-STATUS1 = 'status'
-TRANSFER_JOB = 'transfer_job'
-TRANSFER_JOBS = 'transferJobs'
-TRANSFER_JOB_FIELD_MASK = 'update_transfer_job_field_mask'
-TRANSFER_OPERATIONS = 'transferOperations'
-TRANSFER_OPTIONS = 'transfer_options'
-TRANSFER_SPEC = 'transferSpec'
-YEAR = 'year'
+STATUS1 = "status"
+TRANSFER_JOB = "transfer_job"
+TRANSFER_JOBS = "transferJobs"
+TRANSFER_JOB_FIELD_MASK = "update_transfer_job_field_mask"
+TRANSFER_OPERATIONS = "transferOperations"
+TRANSFER_OPTIONS = "transfer_options"
+TRANSFER_SPEC = "transferSpec"
+YEAR = "year"
 ALREADY_EXIST_CODE = 409
 
 NEGATIVE_STATUSES = {GcpTransferOperationStatus.FAILED, GcpTransferOperationStatus.ABORTED}
@@ -124,10 +125,10 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
 
     def __init__(
         self,
-        api_version: str = 'v1',
+        api_version: str = "v1",
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
     ) -> None:
         super().__init__(
             gcp_conn_id=gcp_conn_id,
@@ -147,7 +148,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
-                'storagetransfer', self.api_version, http=http_authorized, cache_discovery=False
+                "storagetransfer", self.api_version, http=http_authorized, cache_discovery=False
             )
         return self._conn
 
@@ -163,8 +164,8 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         :rtype: dict
         """
         body = self._inject_project_id(body, BODY, PROJECT_ID)
-        try:
 
+        try:
             transfer_job = (
                 self.get_conn().transferJobs().create(body=body).execute(num_retries=self.num_retries)
             )
@@ -215,7 +216,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
             .execute(num_retries=self.num_retries)
         )
 
-    def list_transfer_job(self, request_filter: Optional[dict] = None, **kwargs) -> List[dict]:
+    def list_transfer_job(self, request_filter: dict | None = None, **kwargs) -> list[dict]:
         """
         Lists long-running operations in Google Storage Transfer
         Service that match the specified filter.
@@ -228,8 +229,8 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         # To preserve backward compatibility
         # TODO: remove one day
         if request_filter is None:
-            if 'filter' in kwargs:
-                request_filter = kwargs['filter']
+            if "filter" in kwargs:
+                request_filter = kwargs["filter"]
                 if not isinstance(request_filter, dict):
                     raise ValueError(f"The request_filter should be dict and is {type(request_filter)}")
                 warnings.warn("Use 'request_filter' instead of 'filter'", DeprecationWarning)
@@ -239,7 +240,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         conn = self.get_conn()
         request_filter = self._inject_project_id(request_filter, FILTER, FILTER_PROJECT_ID)
         request = conn.transferJobs().list(filter=json.dumps(request_filter))
-        jobs: List[dict] = []
+        jobs: list[dict] = []
 
         while request is not None:
             response = request.execute(num_retries=self.num_retries)
@@ -347,7 +348,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
             .execute(num_retries=self.num_retries)
         )
 
-    def list_transfer_operations(self, request_filter: Optional[dict] = None, **kwargs) -> List[dict]:
+    def list_transfer_operations(self, request_filter: dict | None = None, **kwargs) -> list[dict]:
         """
         Gets an transfer operation in Google Storage Transfer Service.
 
@@ -365,8 +366,8 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         # To preserve backward compatibility
         # TODO: remove one day
         if request_filter is None:
-            if 'filter' in kwargs:
-                request_filter = kwargs['filter']
+            if "filter" in kwargs:
+                request_filter = kwargs["filter"]
                 if not isinstance(request_filter, dict):
                     raise ValueError(f"The request_filter should be dict and is {type(request_filter)}")
                 warnings.warn("Use 'request_filter' instead of 'filter'", DeprecationWarning)
@@ -379,7 +380,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
 
         request_filter = self._inject_project_id(request_filter, FILTER, FILTER_PROJECT_ID)
 
-        operations: List[dict] = []
+        operations: list[dict] = []
 
         request = conn.transferOperations().list(name=TRANSFER_OPERATIONS, filter=json.dumps(request_filter))
 
@@ -415,8 +416,8 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
     def wait_for_transfer_job(
         self,
         job: dict,
-        expected_statuses: Optional[Set[str]] = None,
-        timeout: Optional[Union[float, timedelta]] = None,
+        expected_statuses: set[str] | None = None,
+        timeout: float | timedelta | None = None,
     ) -> None:
         """
         Waits until the job reaches the expected state.
@@ -464,7 +465,7 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
 
     @staticmethod
     def operations_contain_expected_statuses(
-        operations: List[dict], expected_statuses: Union[Set[str], str]
+        operations: list[dict], expected_statuses: set[str] | str
     ) -> bool:
         """
         Checks whether the operation list has an operation with the

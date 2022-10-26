@@ -16,7 +16,9 @@
 # specific language governing permissions and limitations
 # under the License.
 """This module contains a Google Cloud Spanner Hook."""
-from typing import Callable, List, Optional, Sequence, Union
+from __future__ import annotations
+
+from typing import Callable, Sequence
 
 from google.api_core.exceptions import AlreadyExists, GoogleAPICallError
 from google.cloud.spanner_v1.client import Client
@@ -41,8 +43,8 @@ class SpannerHook(GoogleBaseHook):
     def __init__(
         self,
         gcp_conn_id: str = "google_cloud_default",
-        delegate_to: Optional[str] = None,
-        impersonation_chain: Optional[Union[str, Sequence[str]]] = None,
+        delegate_to: str | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
     ) -> None:
         super().__init__(
             gcp_conn_id=gcp_conn_id,
@@ -117,7 +119,7 @@ class SpannerHook(GoogleBaseHook):
         try:
             operation = func(instance)  # type: Operation
         except GoogleAPICallError as e:
-            self.log.error('An error occurred: %s. Exiting.', e.message)
+            self.log.error("An error occurred: %s. Exiting.", e.message)
             raise e
 
         if operation:
@@ -200,7 +202,7 @@ class SpannerHook(GoogleBaseHook):
             instance.delete()
             return
         except GoogleAPICallError as e:
-            self.log.error('An error occurred: %s. Exiting.', e.message)
+            self.log.error("An error occurred: %s. Exiting.", e.message)
             raise e
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -209,7 +211,7 @@ class SpannerHook(GoogleBaseHook):
         instance_id: str,
         database_id: str,
         project_id: str,
-    ) -> Optional[Database]:
+    ) -> Database | None:
         """
         Retrieves a database in Cloud Spanner. If the database does not exist
         in the specified instance, it returns None.
@@ -236,7 +238,7 @@ class SpannerHook(GoogleBaseHook):
         self,
         instance_id: str,
         database_id: str,
-        ddl_statements: List[str],
+        ddl_statements: list[str],
         project_id: str,
     ) -> None:
         """
@@ -257,7 +259,7 @@ class SpannerHook(GoogleBaseHook):
         try:
             operation = database.create()  # type: Operation
         except GoogleAPICallError as e:
-            self.log.error('An error occurred: %s. Exiting.', e.message)
+            self.log.error("An error occurred: %s. Exiting.", e.message)
             raise e
 
         if operation:
@@ -269,9 +271,9 @@ class SpannerHook(GoogleBaseHook):
         self,
         instance_id: str,
         database_id: str,
-        ddl_statements: List[str],
+        ddl_statements: list[str],
         project_id: str,
-        operation_id: Optional[str] = None,
+        operation_id: str | None = None,
     ) -> None:
         """
         Updates DDL of a database in Cloud Spanner.
@@ -304,7 +306,7 @@ class SpannerHook(GoogleBaseHook):
                 )
                 return
         except GoogleAPICallError as e:
-            self.log.error('An error occurred: %s. Exiting.', e.message)
+            self.log.error("An error occurred: %s. Exiting.", e.message)
             raise e
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -332,7 +334,7 @@ class SpannerHook(GoogleBaseHook):
         try:
             database.drop()
         except GoogleAPICallError as e:
-            self.log.error('An error occurred: %s. Exiting.', e.message)
+            self.log.error("An error occurred: %s. Exiting.", e.message)
             raise e
 
         return True
@@ -342,7 +344,7 @@ class SpannerHook(GoogleBaseHook):
         self,
         instance_id: str,
         database_id: str,
-        queries: List[str],
+        queries: list[str],
         project_id: str,
     ) -> None:
         """
@@ -360,6 +362,6 @@ class SpannerHook(GoogleBaseHook):
         ).run_in_transaction(lambda transaction: self._execute_sql_in_transaction(transaction, queries))
 
     @staticmethod
-    def _execute_sql_in_transaction(transaction: Transaction, queries: List[str]):
+    def _execute_sql_in_transaction(transaction: Transaction, queries: list[str]):
         for sql in queries:
             transaction.execute_update(sql)

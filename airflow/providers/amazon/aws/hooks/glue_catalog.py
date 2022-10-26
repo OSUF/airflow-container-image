@@ -15,9 +15,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 """This module contains AWS Glue Catalog Hook"""
-from typing import Dict, List, Optional, Set
+from __future__ import annotations
 
 from botocore.exceptions import ClientError
 
@@ -37,16 +36,16 @@ class GlueCatalogHook(AwsBaseHook):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(client_type='glue', *args, **kwargs)
+        super().__init__(client_type="glue", *args, **kwargs)
 
     def get_partitions(
         self,
         database_name: str,
         table_name: str,
-        expression: str = '',
-        page_size: Optional[int] = None,
-        max_items: Optional[int] = None,
-    ) -> Set[tuple]:
+        expression: str = "",
+        page_size: int | None = None,
+        max_items: int | None = None,
+    ) -> set[tuple]:
         """
         Retrieves the partition values for a table.
 
@@ -62,19 +61,19 @@ class GlueCatalogHook(AwsBaseHook):
             ``{('2018-01-01','1'), ('2018-01-01','2')}``
         """
         config = {
-            'PageSize': page_size,
-            'MaxItems': max_items,
+            "PageSize": page_size,
+            "MaxItems": max_items,
         }
 
-        paginator = self.get_conn().get_paginator('get_partitions')
+        paginator = self.get_conn().get_paginator("get_partitions")
         response = paginator.paginate(
             DatabaseName=database_name, TableName=table_name, Expression=expression, PaginationConfig=config
         )
 
         partitions = set()
         for page in response:
-            for partition in page['Partitions']:
-                partitions.add(tuple(partition['Values']))
+            for partition in page["Partitions"]:
+                partitions.add(tuple(partition["Values"]))
 
         return partitions
 
@@ -111,7 +110,7 @@ class GlueCatalogHook(AwsBaseHook):
         """
         result = self.get_conn().get_table(DatabaseName=database_name, Name=table_name)
 
-        return result['Table']
+        return result["Table"]
 
     def get_table_location(self, database_name: str, table_name: str) -> str:
         """
@@ -123,9 +122,9 @@ class GlueCatalogHook(AwsBaseHook):
         """
         table = self.get_table(database_name, table_name)
 
-        return table['StorageDescriptor']['Location']
+        return table["StorageDescriptor"]["Location"]
 
-    def get_partition(self, database_name: str, table_name: str, partition_values: List[str]) -> Dict:
+    def get_partition(self, database_name: str, table_name: str, partition_values: list[str]) -> dict:
         """
         Gets a Partition
 
@@ -152,7 +151,7 @@ class GlueCatalogHook(AwsBaseHook):
             self.log.error("Client error: %s", e)
             raise AirflowException("AWS request failed, check logs for more info")
 
-    def create_partition(self, database_name: str, table_name: str, partition_input: Dict) -> Dict:
+    def create_partition(self, database_name: str, table_name: str, partition_input: dict) -> dict:
         """
         Creates a new Partition
 

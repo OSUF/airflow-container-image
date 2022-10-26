@@ -14,9 +14,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any, Union
 
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.synapse.spark import SparkClient
@@ -31,16 +32,16 @@ Credentials = Union[ClientSecretCredential, DefaultAzureCredential]
 class AzureSynapseSparkBatchRunStatus:
     """Azure Synapse Spark Job operation statuses."""
 
-    NOT_STARTED = 'not_started'
-    STARTING = 'starting'
-    RUNNING = 'running'
-    IDLE = 'idle'
-    BUSY = 'busy'
-    SHUTTING_DOWN = 'shutting_down'
-    ERROR = 'error'
-    DEAD = 'dead'
-    KILLED = 'killed'
-    SUCCESS = 'success'
+    NOT_STARTED = "not_started"
+    STARTING = "starting"
+    RUNNING = "running"
+    IDLE = "idle"
+    BUSY = "busy"
+    SHUTTING_DOWN = "shutting_down"
+    ERROR = "error"
+    DEAD = "dead"
+    KILLED = "killed"
+    SUCCESS = "success"
 
     TERMINAL_STATUSES = {SUCCESS, DEAD, KILLED, ERROR}
 
@@ -52,13 +53,13 @@ class AzureSynapseHook(BaseHook):
     :param spark_pool: The Apache Spark pool used to submit the job
     """
 
-    conn_type: str = 'azure_synapse'
-    conn_name_attr: str = 'azure_synapse_conn_id'
-    default_conn_name: str = 'azure_synapse_default'
-    hook_name: str = 'Azure Synapse'
+    conn_type: str = "azure_synapse"
+    conn_name_attr: str = "azure_synapse_conn_id"
+    default_conn_name: str = "azure_synapse_default"
+    hook_name: str = "Azure Synapse"
 
     @staticmethod
-    def get_connection_form_widgets() -> Dict[str, Any]:
+    def get_connection_form_widgets() -> dict[str, Any]:
         """Returns connection widgets to add to connection form"""
         from flask_appbuilder.fieldwidgets import BS3TextFieldWidget
         from flask_babel import lazy_gettext
@@ -66,24 +67,24 @@ class AzureSynapseHook(BaseHook):
 
         return {
             "extra__azure_synapse__tenantId": StringField(
-                lazy_gettext('Tenant ID'), widget=BS3TextFieldWidget()
+                lazy_gettext("Tenant ID"), widget=BS3TextFieldWidget()
             ),
             "extra__azure_synapse__subscriptionId": StringField(
-                lazy_gettext('Subscription ID'), widget=BS3TextFieldWidget()
+                lazy_gettext("Subscription ID"), widget=BS3TextFieldWidget()
             ),
         }
 
     @staticmethod
-    def get_ui_field_behaviour() -> Dict[str, Any]:
+    def get_ui_field_behaviour() -> dict[str, Any]:
         """Returns custom field behaviour"""
         return {
-            "hidden_fields": ['schema', 'port', 'extra'],
-            "relabeling": {'login': 'Client ID', 'password': 'Secret', 'host': 'Synapse Workspace URL'},
+            "hidden_fields": ["schema", "port", "extra"],
+            "relabeling": {"login": "Client ID", "password": "Secret", "host": "Synapse Workspace URL"},
         }
 
-    def __init__(self, azure_synapse_conn_id: str = default_conn_name, spark_pool: str = ''):
-        self.job_id: Optional[int] = None
-        self._conn: Optional[SparkClient] = None
+    def __init__(self, azure_synapse_conn_id: str = default_conn_name, spark_pool: str = ""):
+        self.job_id: int | None = None
+        self._conn: SparkClient | None = None
         self.conn_id = azure_synapse_conn_id
         self.spark_pool = spark_pool
         super().__init__()
@@ -93,12 +94,12 @@ class AzureSynapseHook(BaseHook):
             return self._conn
 
         conn = self.get_connection(self.conn_id)
-        tenant = conn.extra_dejson.get('extra__azure_synapse__tenantId')
+        tenant = conn.extra_dejson.get("extra__azure_synapse__tenantId")
         spark_pool = self.spark_pool
         livy_api_version = "2022-02-22-preview"
 
         try:
-            subscription_id = conn.extra_dejson['extra__azure_synapse__subscriptionId']
+            subscription_id = conn.extra_dejson["extra__azure_synapse__subscriptionId"]
         except KeyError:
             raise ValueError("A Subscription ID is required to connect to Azure Synapse.")
 
@@ -146,8 +147,8 @@ class AzureSynapseHook(BaseHook):
 
     def wait_for_job_run_status(
         self,
-        job_id: Optional[int],
-        expected_statuses: Union[str, Set[str]],
+        job_id: int | None,
+        expected_statuses: str | set[str],
         check_interval: int = 60,
         timeout: int = 60 * 60 * 24 * 7,
     ) -> bool:

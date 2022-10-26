@@ -14,10 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import warnings
+from __future__ import annotations
+
 from contextlib import closing
 from datetime import datetime
-from typing import Any, Callable, Iterable, List, Mapping, Optional, Tuple, Type, Union
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 import sqlparse
 from packaging.version import Version
@@ -26,38 +27,15 @@ from typing_extensions import Protocol
 
 from airflow import AirflowException
 from airflow.hooks.base import BaseHook
-from airflow.providers_manager import ProvidersManager
-from airflow.utils.module_loading import import_string
 from airflow.version import version
 
 
-def fetch_all_handler(cursor) -> Optional[List[Tuple]]:
+def fetch_all_handler(cursor) -> list[tuple] | None:
     """Handler for DbApiHook.run() to return results"""
     if cursor.description is not None:
         return cursor.fetchall()
     else:
         return None
-
-
-def _backported_get_hook(connection, *, hook_params=None):
-    """Return hook based on conn_type
-    For supporting Airflow versions < 2.3, we backport "get_hook()" method. This should be removed
-    when "apache-airflow-providers-slack" will depend on Airflow >= 2.3.
-    """
-    hook = ProvidersManager().hooks.get(connection.conn_type, None)
-
-    if hook is None:
-        raise AirflowException(f'Unknown hook type "{connection.conn_type}"')
-    try:
-        hook_class = import_string(hook.hook_class_name)
-    except ImportError:
-        warnings.warn(
-            f"Could not import {hook.hook_class_name} when discovering {hook.hook_name} {hook.package_name}",
-        )
-        raise
-    if hook_params is None:
-        hook_params = {}
-    return hook_class(**{hook.connection_id_attribute_name: connection.conn_id}, **hook_params)
 
 
 class ConnectorProtocol(Protocol):
@@ -79,14 +57,14 @@ class ConnectorProtocol(Protocol):
 # We want the DbApiHook to derive from the original DbApiHook from airflow, because otherwise
 # SqlSensor and BaseSqlOperator from "airflow.operators" and "airflow.sensors" will refuse to
 # accept the new Hooks as not derived from the original DbApiHook
-if Version(version) < Version('2.4'):
+if Version(version) < Version("2.4"):
     try:
         from airflow.hooks.dbapi import DbApiHook as BaseForDbApiHook
     except ImportError:
         # just in case we have a problem with circular import
-        BaseForDbApiHook: Type[BaseHook] = BaseHook  # type: ignore[no-redef]
+        BaseForDbApiHook: type[BaseHook] = BaseHook  # type: ignore[no-redef]
 else:
-    BaseForDbApiHook: Type[BaseHook] = BaseHook  # type: ignore[no-redef]
+    BaseForDbApiHook: type[BaseHook] = BaseHook  # type: ignore[no-redef]
 
 
 class DbApiHook(BaseForDbApiHook):
@@ -102,7 +80,7 @@ class DbApiHook(BaseForDbApiHook):
     # Override to provide the connection name.
     conn_name_attr = None  # type: str
     # Override to have a default connection id for a particular dbHook
-    default_conn_name = 'default_conn_id'
+    default_conn_name = "default_conn_id"
     # Override if this db supports autocommit.
     supports_autocommit = False
     # Override with the object that exposes the connect method
@@ -112,7 +90,7 @@ class DbApiHook(BaseForDbApiHook):
     # Override with the db-specific value used for placeholders
     placeholder: str = "%s"
 
-    def __init__(self, *args, schema: Optional[str] = None, log_sql: bool = True, **kwargs):
+    def __init__(self, *args, schema: str | None = None, log_sql: bool = True, **kwargs):
         super().__init__()
         if not self.conn_name_attr:
             raise AirflowException("conn_name_attr is not defined")
@@ -198,8 +176,8 @@ class DbApiHook(BaseForDbApiHook):
 
     def get_records(
         self,
-        sql: Union[str, List[str]],
-        parameters: Optional[Union[Iterable, Mapping]] = None,
+        sql: str | list[str],
+        parameters: Iterable | Mapping | None = None,
         **kwargs: dict,
     ):
         """
@@ -217,7 +195,7 @@ class DbApiHook(BaseForDbApiHook):
                     cur.execute(sql)
                 return cur.fetchall()
 
-    def get_first(self, sql: Union[str, List[str]], parameters=None):
+    def get_first(self, sql: str | list[str], parameters=None):
         """
         Executes the sql and returns the first resulting row.
 
@@ -235,10 +213,10 @@ class DbApiHook(BaseForDbApiHook):
 
     @staticmethod
     def strip_sql_string(sql: str) -> str:
-        return sql.strip().rstrip(';')
+        return sql.strip().rstrip(";")
 
     @staticmethod
-    def split_sql_string(sql: str) -> List[str]:
+    def split_sql_string(sql: str) -> list[str]:
         """
         Splits string into multiple SQL expressions
 
@@ -246,18 +224,18 @@ class DbApiHook(BaseForDbApiHook):
         :return: list of individual expressions
         """
         splits = sqlparse.split(sqlparse.format(sql, strip_comments=True))
-        statements: List[str] = list(filter(None, splits))
+        statements: list[str] = list(filter(None, splits))
         return statements
 
     def run(
         self,
-        sql: Union[str, Iterable[str]],
+        sql: str | Iterable[str],
         autocommit: bool = False,
-        parameters: Optional[Union[Iterable, Mapping]] = None,
-        handler: Optional[Callable] = None,
+        parameters: Iterable | Mapping | None = None,
+        handler: Callable | None = None,
         split_statements: bool = False,
         return_last: bool = True,
-    ) -> Optional[Union[Any, List[Any]]]:
+    ) -> Any | list[Any] | None:
         """
         Runs a command or a list of commands. Pass a list of sql
         statements to the sql parameter to get them to execute
@@ -343,7 +321,7 @@ class DbApiHook(BaseForDbApiHook):
         :return: connection autocommit setting.
         :rtype: bool
         """
-        return getattr(conn, 'autocommit', False) and self.supports_autocommit
+        return getattr(conn, "autocommit", False) and self.supports_autocommit
 
     def get_cursor(self):
         """Returns a cursor"""
@@ -370,7 +348,7 @@ class DbApiHook(BaseForDbApiHook):
             target_fields = ", ".join(target_fields)
             target_fields = f"({target_fields})"
         else:
-            target_fields = ''
+            target_fields = ""
 
         if not replace:
             sql = "INSERT INTO "
@@ -412,7 +390,7 @@ class DbApiHook(BaseForDbApiHook):
                         self.log.info("Loaded %s rows into %s so far", i, table)
 
             conn.commit()
-        self.log.info("Done loading. Loaded a total of %s rows", i)
+        self.log.info("Done loading. Loaded a total of %s rows into %s", i, table)
 
     @staticmethod
     def _serialize_cell(cell, conn=None):
@@ -450,11 +428,11 @@ class DbApiHook(BaseForDbApiHook):
 
     def test_connection(self):
         """Tests the connection using db-specific query"""
-        status, message = False, ''
+        status, message = False, ""
         try:
             if self.get_first(self._test_connection_sql):
                 status = True
-                message = 'Connection successfully tested'
+                message = "Connection successfully tested"
         except Exception as e:
             status = False
             message = str(e)

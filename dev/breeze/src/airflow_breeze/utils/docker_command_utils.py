@@ -15,13 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 """Various utils to prepare docker and docker compose commands."""
+from __future__ import annotations
+
 import os
 import re
 import sys
 from copy import deepcopy
 from random import randint
 from subprocess import CalledProcessError, CompletedProcess
-from typing import Dict, List, Optional, Union
 
 from airflow_breeze.params.build_ci_params import BuildCiParams
 from airflow_breeze.params.build_prod_params import BuildProdParams
@@ -29,7 +30,7 @@ from airflow_breeze.params.common_build_params import CommonBuildParams
 from airflow_breeze.params.shell_params import ShellParams
 from airflow_breeze.utils.host_info_utils import get_host_group_id, get_host_os, get_host_user_id
 from airflow_breeze.utils.image import find_available_ci_image
-from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT, MSSQL_DATA_VOLUME
+from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT
 
 try:
     from packaging import version
@@ -106,7 +107,7 @@ VOLUMES_FOR_SELECTED_MOUNTS = [
 ]
 
 
-def get_extra_docker_flags(mount_sources: str, include_mypy_volume: bool = False) -> List[str]:
+def get_extra_docker_flags(mount_sources: str, include_mypy_volume: bool = False) -> list[str]:
     """
     Returns extra docker flags based on the type of mounting we want to do for sources.
 
@@ -121,11 +122,11 @@ def get_extra_docker_flags(mount_sources: str, include_mypy_volume: bool = False
         for (src, dst) in VOLUMES_FOR_SELECTED_MOUNTS:
             if (AIRFLOW_SOURCES_ROOT / src).exists():
                 extra_docker_flags.extend(
-                    ["--mount", f'type=bind,src={AIRFLOW_SOURCES_ROOT / src},dst={dst}']
+                    ["--mount", f"type=bind,src={AIRFLOW_SOURCES_ROOT / src},dst={dst}"]
                 )
         if include_mypy_volume:
             extra_docker_flags.extend(
-                ['--mount', "type=volume,src=mypy-cache-volume,dst=/opt/airflow/.mypy_cache"]
+                ["--mount", "type=volume,src=mypy-cache-volume,dst=/opt/airflow/.mypy_cache"]
             )
     elif mount_sources == MOUNT_REMOVE:
         extra_docker_flags.extend(
@@ -187,13 +188,13 @@ def check_docker_permission_denied(verbose: bool) -> bool:
     )
     if command_result.returncode != 0:
         permission_denied = True
-        if command_result.stdout and 'Got permission denied while trying to connect' in command_result.stdout:
+        if command_result.stdout and "Got permission denied while trying to connect" in command_result.stdout:
             get_console().print(
-                'ERROR: You have `permission denied` error when trying to communicate with docker.'
+                "ERROR: You have `permission denied` error when trying to communicate with docker."
             )
             get_console().print(
-                'Most likely you need to add your user to `docker` group: \
-                https://docs.docker.com/ engine/install/linux-postinstall/ .'
+                "Most likely you need to add your user to `docker` group: \
+                https://docs.docker.com/ engine/install/linux-postinstall/ ."
             )
     return permission_denied
 
@@ -217,8 +218,8 @@ def check_docker_is_running(verbose: bool):
     )
     if response.returncode != 0:
         get_console().print(
-            '[error]Docker is not running.[/]\n'
-            '[warning]Please make sure Docker is installed and running.[/]'
+            "[error]Docker is not running.[/]\n"
+            "[warning]Please make sure Docker is installed and running.[/]"
         )
         sys.exit(1)
 
@@ -234,8 +235,8 @@ def check_docker_version(verbose: bool):
     """
     permission_denied = check_docker_permission_denied(verbose)
     if not permission_denied:
-        docker_version_command = ['docker', 'version', '--format', '{{.Client.Version}}']
-        docker_version = ''
+        docker_version_command = ["docker", "version", "--format", "{{.Client.Version}}"]
+        docker_version = ""
         docker_version_result = run_command(
             docker_version_command,
             verbose=verbose,
@@ -246,7 +247,7 @@ def check_docker_version(verbose: bool):
         )
         if docker_version_result.returncode == 0:
             docker_version = docker_version_result.stdout.strip()
-        if docker_version == '':
+        if docker_version == "":
             get_console().print(
                 f"""
 [warning]Your version of docker is unknown. If the scripts fail, please make sure to[/]
@@ -256,7 +257,7 @@ def check_docker_version(verbose: bool):
         else:
             good_version = compare_version(docker_version, MIN_DOCKER_VERSION)
             if good_version:
-                get_console().print(f'[success]Good version of Docker: {docker_version}.[/]')
+                get_console().print(f"[success]Good version of Docker: {docker_version}.[/]")
             else:
                 get_console().print(
                     f"""
@@ -264,6 +265,9 @@ def check_docker_version(verbose: bool):
 Please upgrade to at least {MIN_DOCKER_VERSION}[/]
 """
                 )
+
+
+DOCKER_COMPOSE_COMMAND = ["docker-compose"]
 
 
 def check_docker_compose_version(verbose: bool):
@@ -274,7 +278,7 @@ def check_docker_compose_version(verbose: bool):
 
     :param verbose: print commands when running
     """
-    version_pattern = re.compile(r'(\d+)\.(\d+)\.(\d+)')
+    version_pattern = re.compile(r"(\d+)\.(\d+)\.(\d+)")
     docker_compose_version_command = ["docker-compose", "--version"]
     try:
         docker_compose_version_result = run_command(
@@ -293,15 +297,16 @@ def check_docker_compose_version(verbose: bool):
             capture_output=True,
             text=True,
         )
-
+        DOCKER_COMPOSE_COMMAND.clear()
+        DOCKER_COMPOSE_COMMAND.extend(["docker", "compose"])
     if docker_compose_version_result.returncode == 0:
         docker_compose_version = docker_compose_version_result.stdout
         version_extracted = version_pattern.search(docker_compose_version)
         if version_extracted is not None:
-            docker_version = '.'.join(version_extracted.groups())
+            docker_version = ".".join(version_extracted.groups())
             good_version = compare_version(docker_version, MIN_DOCKER_COMPOSE_VERSION)
             if good_version:
-                get_console().print(f'[success]Good version of docker-compose: {docker_version}[/]')
+                get_console().print(f"[success]Good version of docker-compose: {docker_version}[/]")
             else:
                 get_console().print(
                     f"""
@@ -338,29 +343,29 @@ def check_docker_context(verbose: bool):
     )
     if response.returncode != 0:
         get_console().print(
-            '[warning]Could not check for Docker context.[/]\n'
+            "[warning]Could not check for Docker context.[/]\n"
             '[warning]Please make sure that Docker is using the right context by running "docker info" and '
-            'checking the active Context.[/]'
+            "checking the active Context.[/]"
         )
         return
 
-    used_docker_context = response.stdout.strip().replace('"', '')
+    used_docker_context = response.stdout.strip().replace('"', "")
 
     if used_docker_context == expected_docker_context:
-        get_console().print(f'[success]Good Docker context used: {used_docker_context}.[/]')
+        get_console().print(f"[success]Good Docker context used: {used_docker_context}.[/]")
     else:
         get_console().print(
-            f'[error]Docker is not using the default context, used context is: {used_docker_context}[/]\n'
-            f'[warning]Please make sure Docker is using the {expected_docker_context} context.[/]\n'
+            f"[error]Docker is not using the default context, used context is: {used_docker_context}[/]\n"
+            f"[warning]Please make sure Docker is using the {expected_docker_context} context.[/]\n"
             f'[warning]You can try switching contexts by running: "docker context use '
             f'{expected_docker_context}"[/]'
         )
         sys.exit(1)
 
 
-def get_env_variable_value(arg_name: str, params: Union[CommonBuildParams, ShellParams]):
+def get_env_variable_value(arg_name: str, params: CommonBuildParams | ShellParams):
     raw_value = getattr(params, arg_name, None)
-    value = str(raw_value) if raw_value is not None else ''
+    value = str(raw_value) if raw_value is not None else ""
     value = "true" if raw_value is True else value
     value = "false" if raw_value is False else value
     if arg_name == "upgrade_to_newer_dependencies" and value == "true":
@@ -368,7 +373,7 @@ def get_env_variable_value(arg_name: str, params: Union[CommonBuildParams, Shell
     return value
 
 
-def prepare_arguments_for_docker_build_command(image_params: CommonBuildParams) -> List[str]:
+def prepare_arguments_for_docker_build_command(image_params: CommonBuildParams) -> list[str]:
     """
     Constructs docker compose command arguments list based on parameters passed. Maps arguments to
     argument values.
@@ -399,7 +404,7 @@ def prepare_arguments_for_docker_build_command(image_params: CommonBuildParams) 
 
 def prepare_docker_build_cache_command(
     image_params: CommonBuildParams,
-) -> List[str]:
+) -> list[str]:
     """
     Constructs docker build_cache command based on the parameters passed.
     :param image_params: parameters of the image
@@ -417,7 +422,7 @@ def prepare_docker_build_cache_command(
     final_command.extend(arguments)
     final_command.extend(["--target", "main", "."])
     final_command.extend(
-        ["-f", 'Dockerfile' if isinstance(image_params, BuildProdParams) else 'Dockerfile.ci']
+        ["-f", "Dockerfile" if isinstance(image_params, BuildProdParams) else "Dockerfile.ci"]
     )
     final_command.extend(["--platform", image_params.platform])
     final_command.extend(
@@ -426,7 +431,7 @@ def prepare_docker_build_cache_command(
     return final_command
 
 
-def prepare_base_build_command(image_params: CommonBuildParams, verbose: bool) -> List[str]:
+def prepare_base_build_command(image_params: CommonBuildParams, verbose: bool) -> list[str]:
     """
     Prepare build command for docker build. Depending on whether we have buildx plugin installed or not,
     and whether we run cache preparation, there might be different results:
@@ -460,7 +465,7 @@ def prepare_base_build_command(image_params: CommonBuildParams, verbose: bool) -
 def prepare_docker_build_command(
     image_params: CommonBuildParams,
     verbose: bool,
-) -> List[str]:
+) -> list[str]:
     """
     Constructs docker build command based on the parameters passed.
     :param image_params: parameters of the image
@@ -478,7 +483,7 @@ def prepare_docker_build_command(
     final_command.extend(arguments)
     final_command.extend(["-t", image_params.airflow_image_name_with_tag, "--target", "main", "."])
     final_command.extend(
-        ["-f", 'Dockerfile' if isinstance(image_params, BuildProdParams) else 'Dockerfile.ci']
+        ["-f", "Dockerfile" if isinstance(image_params, BuildProdParams) else "Dockerfile.ci"]
     )
     final_command.extend(["--platform", image_params.platform])
     return final_command
@@ -486,7 +491,7 @@ def prepare_docker_build_command(
 
 def construct_docker_push_command(
     image_params: CommonBuildParams,
-) -> List[str]:
+) -> list[str]:
     """
     Constructs docker push command based on the parameters passed.
     :param image_params: parameters of the image
@@ -497,7 +502,7 @@ def construct_docker_push_command(
 
 def prepare_docker_build_from_input(
     image_params: CommonBuildParams,
-) -> List[str]:
+) -> list[str]:
     """
     Constructs docker build empty image command based on the parameters passed.
     :param image_params: parameters of the image
@@ -507,11 +512,9 @@ def prepare_docker_build_from_input(
 
 
 def build_cache(
-    image_params: CommonBuildParams, output: Optional[Output], dry_run: bool, verbose: bool
+    image_params: CommonBuildParams, output: Output | None, dry_run: bool, verbose: bool
 ) -> RunCommandResult:
-    build_command_result: Union[CompletedProcess, CalledProcessError] = CompletedProcess(
-        args=[], returncode=0
-    )
+    build_command_result: CompletedProcess | CalledProcessError = CompletedProcess(args=[], returncode=0)
     for platform in image_params.platforms:
         platform_image_params = deepcopy(image_params)
         # override the platform in the copied params to only be single platform per run
@@ -533,15 +536,15 @@ def build_cache(
 
 
 def make_sure_builder_configured(params: CommonBuildParams, dry_run: bool, verbose: bool):
-    if params.builder != 'default':
-        cmd = ['docker', 'buildx', 'inspect', params.builder]
+    if params.builder != "default":
+        cmd = ["docker", "buildx", "inspect", params.builder]
         buildx_command_result = run_command(cmd, verbose=verbose, dry_run=dry_run, text=True, check=False)
         if buildx_command_result and buildx_command_result.returncode != 0:
-            next_cmd = ['docker', 'buildx', 'create', '--name', params.builder]
+            next_cmd = ["docker", "buildx", "create", "--name", params.builder]
             run_command(next_cmd, verbose=verbose, text=True, check=False)
 
 
-def set_value_to_default_if_not_set(env: Dict[str, str], name: str, default: str):
+def set_value_to_default_if_not_set(env: dict[str, str], name: str, default: str):
     """
     Set value of name parameter to default (indexed by name) if not set.
     :param env: dictionary where to set the parameter
@@ -553,89 +556,90 @@ def set_value_to_default_if_not_set(env: Dict[str, str], name: str, default: str
         env[name] = os.environ.get(name, default)
 
 
-def update_expected_environment_variables(env: Dict[str, str]) -> None:
+def update_expected_environment_variables(env: dict[str, str]) -> None:
     """
     Updates default values for unset environment variables.
 
     :param env: environment variables to update with missing values if not set.
     """
-    set_value_to_default_if_not_set(env, 'AIRFLOW_CONSTRAINTS_MODE', "constraints-source-providers")
-    set_value_to_default_if_not_set(env, 'AIRFLOW_CONSTRAINTS_REFERENCE', "constraints-source-providers")
-    set_value_to_default_if_not_set(env, 'AIRFLOW_EXTRAS', "")
-    set_value_to_default_if_not_set(env, 'ANSWER', "")
-    set_value_to_default_if_not_set(env, 'BREEZE', "true")
-    set_value_to_default_if_not_set(env, 'BREEZE_INIT_COMMAND', "")
-    set_value_to_default_if_not_set(env, 'CI', "false")
-    set_value_to_default_if_not_set(env, 'CI_BUILD_ID', "0")
-    set_value_to_default_if_not_set(env, 'CI_EVENT_TYPE', "pull_request")
-    set_value_to_default_if_not_set(env, 'CI_JOB_ID', "0")
-    set_value_to_default_if_not_set(env, 'CI_TARGET_BRANCH', AIRFLOW_BRANCH)
-    set_value_to_default_if_not_set(env, 'CI_TARGET_REPO', APACHE_AIRFLOW_GITHUB_REPOSITORY)
-    set_value_to_default_if_not_set(env, 'COMMIT_SHA', commit_sha())
-    set_value_to_default_if_not_set(env, 'DB_RESET', "false")
-    set_value_to_default_if_not_set(env, 'DEFAULT_BRANCH', AIRFLOW_BRANCH)
-    set_value_to_default_if_not_set(env, 'ENABLED_SYSTEMS', "")
-    set_value_to_default_if_not_set(env, 'ENABLE_TEST_COVERAGE', "false")
-    set_value_to_default_if_not_set(env, 'GITHUB_REGISTRY_PULL_IMAGE_TAG', "latest")
-    set_value_to_default_if_not_set(env, 'HOST_GROUP_ID', get_host_group_id())
-    set_value_to_default_if_not_set(env, 'HOST_OS', get_host_os())
-    set_value_to_default_if_not_set(env, 'HOST_USER_ID', get_host_user_id())
-    set_value_to_default_if_not_set(env, 'INIT_SCRIPT_FILE', "init.sh")
-    set_value_to_default_if_not_set(env, 'INSTALL_PACKAGES_FROM_CONTEXT', "false")
-    set_value_to_default_if_not_set(env, 'INSTALL_PROVIDERS_FROM_SOURCES', "true")
-    set_value_to_default_if_not_set(env, 'LIST_OF_INTEGRATION_TESTS_TO_RUN', "")
-    set_value_to_default_if_not_set(env, 'LOAD_DEFAULT_CONNECTIONS', "false")
-    set_value_to_default_if_not_set(env, 'LOAD_EXAMPLES', "false")
-    set_value_to_default_if_not_set(env, 'MSSQL_DATA_VOLUME', str(MSSQL_DATA_VOLUME))
-    set_value_to_default_if_not_set(env, 'PACKAGE_FORMAT', ALLOWED_PACKAGE_FORMATS[0])
-    set_value_to_default_if_not_set(env, 'PRINT_INFO_FROM_SCRIPTS', "true")
-    set_value_to_default_if_not_set(env, 'PYTHONDONTWRITEBYTECODE', "true")
-    set_value_to_default_if_not_set(env, 'RUN_SYSTEM_TESTS', "false")
-    set_value_to_default_if_not_set(env, 'RUN_TESTS', "false")
-    set_value_to_default_if_not_set(env, 'SKIP_ENVIRONMENT_INITIALIZATION', "false")
-    set_value_to_default_if_not_set(env, 'SKIP_SSH_SETUP', "false")
-    set_value_to_default_if_not_set(env, 'TEST_TYPE', "")
-    set_value_to_default_if_not_set(env, 'TEST_TIMEOUT', "60")
-    set_value_to_default_if_not_set(env, 'UPGRADE_TO_NEWER_DEPENDENCIES', "false")
-    set_value_to_default_if_not_set(env, 'USE_PACKAGES_FROM_DIST', "false")
-    set_value_to_default_if_not_set(env, 'VERBOSE', "false")
-    set_value_to_default_if_not_set(env, 'VERBOSE_COMMANDS', "false")
-    set_value_to_default_if_not_set(env, 'VERSION_SUFFIX_FOR_PYPI', "")
-    set_value_to_default_if_not_set(env, 'WHEEL_VERSION', "0.36.2")
+    set_value_to_default_if_not_set(env, "AIRFLOW_CONSTRAINTS_MODE", "constraints-source-providers")
+    set_value_to_default_if_not_set(env, "AIRFLOW_CONSTRAINTS_REFERENCE", "constraints-source-providers")
+    set_value_to_default_if_not_set(env, "AIRFLOW_EXTRAS", "")
+    set_value_to_default_if_not_set(env, "ANSWER", "")
+    set_value_to_default_if_not_set(env, "BASE_BRANCH", "main")
+    set_value_to_default_if_not_set(env, "BREEZE", "true")
+    set_value_to_default_if_not_set(env, "BREEZE_INIT_COMMAND", "")
+    set_value_to_default_if_not_set(env, "CI", "false")
+    set_value_to_default_if_not_set(env, "CI_BUILD_ID", "0")
+    set_value_to_default_if_not_set(env, "CI_EVENT_TYPE", "pull_request")
+    set_value_to_default_if_not_set(env, "CI_JOB_ID", "0")
+    set_value_to_default_if_not_set(env, "CI_TARGET_BRANCH", AIRFLOW_BRANCH)
+    set_value_to_default_if_not_set(env, "CI_TARGET_REPO", APACHE_AIRFLOW_GITHUB_REPOSITORY)
+    set_value_to_default_if_not_set(env, "COMMIT_SHA", commit_sha())
+    set_value_to_default_if_not_set(env, "DB_RESET", "false")
+    set_value_to_default_if_not_set(env, "DEFAULT_BRANCH", AIRFLOW_BRANCH)
+    set_value_to_default_if_not_set(env, "ENABLED_SYSTEMS", "")
+    set_value_to_default_if_not_set(env, "ENABLE_TEST_COVERAGE", "false")
+    set_value_to_default_if_not_set(env, "HOST_GROUP_ID", get_host_group_id())
+    set_value_to_default_if_not_set(env, "HOST_OS", get_host_os())
+    set_value_to_default_if_not_set(env, "HOST_USER_ID", get_host_user_id())
+    set_value_to_default_if_not_set(env, "INIT_SCRIPT_FILE", "init.sh")
+    set_value_to_default_if_not_set(env, "INSTALL_PACKAGES_FROM_CONTEXT", "false")
+    set_value_to_default_if_not_set(env, "INSTALL_PROVIDERS_FROM_SOURCES", "true")
+    set_value_to_default_if_not_set(env, "LIST_OF_INTEGRATION_TESTS_TO_RUN", "")
+    set_value_to_default_if_not_set(env, "LOAD_DEFAULT_CONNECTIONS", "false")
+    set_value_to_default_if_not_set(env, "LOAD_EXAMPLES", "false")
+    set_value_to_default_if_not_set(env, "PACKAGE_FORMAT", ALLOWED_PACKAGE_FORMATS[0])
+    set_value_to_default_if_not_set(env, "PYTHONDONTWRITEBYTECODE", "true")
+    set_value_to_default_if_not_set(env, "RUN_SYSTEM_TESTS", "false")
+    set_value_to_default_if_not_set(env, "RUN_TESTS", "false")
+    set_value_to_default_if_not_set(env, "SKIP_ENVIRONMENT_INITIALIZATION", "false")
+    set_value_to_default_if_not_set(env, "SKIP_SSH_SETUP", "false")
+    set_value_to_default_if_not_set(env, "TEST_TYPE", "")
+    set_value_to_default_if_not_set(env, "TEST_TIMEOUT", "60")
+    set_value_to_default_if_not_set(env, "UPGRADE_TO_NEWER_DEPENDENCIES", "false")
+    set_value_to_default_if_not_set(env, "USE_PACKAGES_FROM_DIST", "false")
+    set_value_to_default_if_not_set(env, "VERBOSE", "false")
+    set_value_to_default_if_not_set(env, "VERBOSE_COMMANDS", "false")
+    set_value_to_default_if_not_set(env, "VERSION_SUFFIX_FOR_PYPI", "")
+    set_value_to_default_if_not_set(env, "WHEEL_VERSION", "0.36.2")
 
 
 DERIVE_ENV_VARIABLES_FROM_ATTRIBUTES = {
     "AIRFLOW_CI_IMAGE": "airflow_image_name",
     "AIRFLOW_CI_IMAGE_WITH_TAG": "airflow_image_name_with_tag",
-    "AIRFLOW_EXTRAS": "airflow_extras",
-    "DEFAULT_CONSTRAINTS_BRANCH": "default-constraints-branch",
     "AIRFLOW_CONSTRAINTS_MODE": "airflow_constraints_mode",
     "AIRFLOW_CONSTRAINTS_REFERENCE": "airflow_constraints_reference",
+    "AIRFLOW_EXTRAS": "airflow_extras",
     "AIRFLOW_IMAGE_KUBERNETES": "airflow_image_kubernetes",
     "AIRFLOW_PROD_IMAGE": "airflow_image_name",
     "AIRFLOW_SOURCES": "airflow_sources",
     "AIRFLOW_VERSION": "airflow_version",
     "ANSWER": "answer",
     "BACKEND": "backend",
-    "COMPOSE_FILE": "compose_files",
-    "DB_RESET": 'db_reset',
+    "BASE_BRANCH": "base_branch",
+    "COMPOSE_FILE": "compose_file",
+    "DB_RESET": "db_reset",
+    "DEV_MODE": "dev_mode",
+    "DEFAULT_CONSTRAINTS_BRANCH": "default_constraints_branch",
     "ENABLED_INTEGRATIONS": "enabled_integrations",
     "GITHUB_ACTIONS": "github_actions",
     "INSTALL_AIRFLOW_VERSION": "install_airflow_version",
     "INSTALL_PROVIDERS_FROM_SOURCES": "install_providers_from_sources",
     "ISSUE_ID": "issue_id",
-    "LOAD_EXAMPLES": "load_example_dags",
     "LOAD_DEFAULT_CONNECTIONS": "load_default_connections",
-    "MYSQL_VERSION": "mysql_version",
+    "LOAD_EXAMPLES": "load_example_dags",
+    "MSSQL_DATA_VOLUME": "mssql_data_volume",
     "MSSQL_VERSION": "mssql_version",
+    "MYSQL_VERSION": "mysql_version",
     "NUM_RUNS": "num_runs",
     "PACKAGE_FORMAT": "package_format",
-    "PYTHON_MAJOR_MINOR_VERSION": "python",
     "POSTGRES_VERSION": "postgres_version",
-    "SQLITE_URL": "sqlite_url",
-    "START_AIRFLOW": "start_airflow",
+    "PYTHON_MAJOR_MINOR_VERSION": "python",
     "SKIP_CONSTRAINTS": "skip_constraints",
     "SKIP_ENVIRONMENT_INITIALIZATION": "skip_environment_initialization",
+    "SQLITE_URL": "sqlite_url",
+    "START_AIRFLOW": "start_airflow",
     "USE_AIRFLOW_VERSION": "use_airflow_version",
     "USE_PACKAGES_FROM_DIST": "use_packages_from_dist",
     "VERSION_SUFFIX_FOR_PYPI": "version_suffix_for_pypi",
@@ -652,7 +656,7 @@ DOCKER_VARIABLE_CONSTANTS = {
 }
 
 
-def get_env_variables_for_docker_commands(params: Union[ShellParams, BuildCiParams]) -> Dict[str, str]:
+def get_env_variables_for_docker_commands(params: ShellParams | BuildCiParams) -> dict[str, str]:
     """
     Constructs environment variables needed by the docker-compose command, based on Shell parameters
     passed to it.
@@ -666,7 +670,7 @@ def get_env_variables_for_docker_commands(params: Union[ShellParams, BuildCiPara
     :param params: shell parameters passed.
     :return: dictionary of env variables to set
     """
-    env_variables: Dict[str, str] = os.environ.copy()
+    env_variables: dict[str, str] = os.environ.copy()
     for variable in DERIVE_ENV_VARIABLES_FROM_ATTRIBUTES:
         param_name = DERIVE_ENV_VARIABLES_FROM_ATTRIBUTES[variable]
         param_value = get_env_variable_value(param_name, params=params)

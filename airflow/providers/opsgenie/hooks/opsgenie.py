@@ -15,9 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-
-from typing import Optional
+from __future__ import annotations
 
 from opsgenie_sdk import (
     AlertApi,
@@ -46,18 +44,18 @@ class OpsgenieAlertHook(BaseHook):
 
     """
 
-    conn_name_attr = 'opsgenie_conn_id'
-    default_conn_name = 'opsgenie_default'
-    conn_type = 'opsgenie'
-    hook_name = 'Opsgenie'
+    conn_name_attr = "opsgenie_conn_id"
+    default_conn_name = "opsgenie_default"
+    conn_type = "opsgenie"
+    hook_name = "Opsgenie"
 
-    def __init__(self, opsgenie_conn_id: str = 'opsgenie_default') -> None:
+    def __init__(self, opsgenie_conn_id: str = "opsgenie_default") -> None:
         super().__init__()  # type: ignore[misc]
         self.conn_id = opsgenie_conn_id
         configuration = Configuration()
         conn = self.get_connection(self.conn_id)
-        configuration.api_key['Authorization'] = conn.password
-        configuration.host = conn.host or 'https://api.opsgenie.com'
+        configuration.api_key["Authorization"] = conn.password
+        configuration.host = conn.host or "https://api.opsgenie.com"
         self.alert_api_instance = AlertApi(ApiClient(configuration))
 
     def _get_api_key(self) -> str:
@@ -79,7 +77,7 @@ class OpsgenieAlertHook(BaseHook):
         """
         return self.alert_api_instance
 
-    def create_alert(self, payload: Optional[dict] = None) -> SuccessResponse:
+    def create_alert(self, payload: dict | None = None) -> SuccessResponse:
         """
         Create an alert on Opsgenie
 
@@ -95,15 +93,15 @@ class OpsgenieAlertHook(BaseHook):
             api_response = self.alert_api_instance.create_alert(create_alert_payload)
             return api_response
         except OpenApiException as e:
-            self.log.exception('Exception when sending alert to opsgenie with payload: %s', payload)
+            self.log.exception("Exception when sending alert to opsgenie with payload: %s", payload)
             raise e
 
     def close_alert(
         self,
         identifier: str,
-        identifier_type: Optional[str] = 'id',
-        payload: Optional[dict] = None,
-        **kwargs: Optional[dict],
+        identifier_type: str | None = "id",
+        payload: dict | None = None,
+        **kwargs: dict | None,
     ) -> SuccessResponse:
         """
         Close an alert in Opsgenie
@@ -130,15 +128,15 @@ class OpsgenieAlertHook(BaseHook):
             )
             return api_response
         except OpenApiException as e:
-            self.log.exception('Exception when closing alert in opsgenie with payload: %s', payload)
+            self.log.exception("Exception when closing alert in opsgenie with payload: %s", payload)
             raise e
 
     def delete_alert(
         self,
         identifier: str,
-        identifier_type: Optional[str] = None,
-        user: Optional[str] = None,
-        source: Optional[str] = None,
+        identifier_type: str | None = None,
+        user: str | None = None,
+        source: str | None = None,
     ) -> SuccessResponse:
         """
         Delete an alert in Opsgenie
@@ -160,5 +158,5 @@ class OpsgenieAlertHook(BaseHook):
             )
             return api_response
         except OpenApiException as e:
-            self.log.exception('Exception when calling AlertApi->delete_alert: %s\n', e)
+            self.log.exception("Exception when calling AlertApi->delete_alert: %s\n", e)
             raise e

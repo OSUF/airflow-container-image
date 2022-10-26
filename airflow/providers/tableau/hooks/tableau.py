@@ -14,10 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
+
 import time
 import warnings
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any
 
 from tableauserverclient import Pager, PersonalAccessTokenAuth, Server, TableauAuth
 from tableauserverclient.server import Auth
@@ -26,15 +28,15 @@ from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
 
 
-def parse_boolean(val: str) -> Union[str, bool]:
+def parse_boolean(val: str) -> str | bool:
     """Try to parse a string into boolean.
 
     The string is returned as-is if it does not look like a boolean value.
     """
     val = val.lower()
-    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+    if val in ("y", "yes", "t", "true", "on", "1"):
         return True
-    if val in ('n', 'no', 'f', 'false', 'off', '0'):
+    if val in ("n", "no", "f", "false", "off", "0"):
         return False
     return val
 
@@ -70,22 +72,22 @@ class TableauHook(BaseHook):
         containing the credentials to authenticate to the Tableau Server.
     """
 
-    conn_name_attr = 'tableau_conn_id'
-    default_conn_name = 'tableau_default'
-    conn_type = 'tableau'
-    hook_name = 'Tableau'
+    conn_name_attr = "tableau_conn_id"
+    default_conn_name = "tableau_default"
+    conn_type = "tableau"
+    hook_name = "Tableau"
 
-    def __init__(self, site_id: Optional[str] = None, tableau_conn_id: str = default_conn_name) -> None:
+    def __init__(self, site_id: str | None = None, tableau_conn_id: str = default_conn_name) -> None:
         super().__init__()
         self.tableau_conn_id = tableau_conn_id
         self.conn = self.get_connection(self.tableau_conn_id)
-        self.site_id = site_id or self.conn.extra_dejson.get('site_id', '')
+        self.site_id = site_id or self.conn.extra_dejson.get("site_id", "")
         self.server = Server(self.conn.host)
-        verify: Any = self.conn.extra_dejson.get('verify', True)
+        verify: Any = self.conn.extra_dejson.get("verify", True)
         if isinstance(verify, str):
             verify = parse_boolean(verify)
         self.server.add_http_options(
-            options_dict={'verify': verify, 'cert': self.conn.extra_dejson.get('cert', None)}
+            options_dict={"verify": verify, "cert": self.conn.extra_dejson.get("cert", None)}
         )
         self.server.use_server_version()
         self.tableau_conn = None
@@ -107,9 +109,9 @@ class TableauHook(BaseHook):
         """
         if self.conn.login and self.conn.password:
             return self._auth_via_password()
-        if 'token_name' in self.conn.extra_dejson and 'personal_access_token' in self.conn.extra_dejson:
+        if "token_name" in self.conn.extra_dejson and "personal_access_token" in self.conn.extra_dejson:
             return self._auth_via_token()
-        raise NotImplementedError('No Authentication method found for given Credentials!')
+        raise NotImplementedError("No Authentication method found for given Credentials!")
 
     def _auth_via_password(self) -> Auth.contextmgr:
         tableau_auth = TableauAuth(
@@ -125,8 +127,8 @@ class TableauHook(BaseHook):
             DeprecationWarning,
         )
         tableau_auth = PersonalAccessTokenAuth(
-            token_name=self.conn.extra_dejson['token_name'],
-            personal_access_token=self.conn.extra_dejson['personal_access_token'],
+            token_name=self.conn.extra_dejson["token_name"],
+            personal_access_token=self.conn.extra_dejson["personal_access_token"],
             site_id=self.site_id,
         )
         return self.server.auth.sign_in_with_personal_access_token(tableau_auth)
