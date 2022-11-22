@@ -326,12 +326,21 @@ class SchedulerJob(BaseJob):
 
             query = query.limit(max_tis)
 
-            task_instances_to_examine: list[TI] = with_row_locks(
-                query,
-                of=TI,
-                session=session,
-                **skip_locked(session=session),
-            ).all()
+            timer = Stats.timer("scheduler.critical_section_query_duration")
+            timer.start()
+
+            try:
+                task_instances_to_examine: list[TI] = with_row_locks(
+                    query,
+                    of=TI,
+                    session=session,
+                    **skip_locked(session=session),
+                ).all()
+                timer.stop(send=True)
+            except OperationalError as e:
+                timer.stop(send=False)
+                raise e
+
             # TODO[HA]: This was wrong before anyway, as it only looked at a sub-set of dags, not everything.
             # Stats.gauge('scheduler.tasks.pending', len(task_instances_to_examine))
 
@@ -1204,7 +1213,6 @@ class SchedulerJob(BaseJob):
                 Stats.timing(f"dagrun.schedule_delay.{dag.dag_id}", schedule_delay)
 
         for dag_run in dag_runs:
-
             dag = dag_run.dag = self.dagbag.get_dag(dag_run.dag_id, session=session)
             if not dag:
                 self.log.error("DAG '%s' not found in serialized_dag table", dag_run.dag_id)
@@ -1221,6 +1229,7 @@ class SchedulerJob(BaseJob):
             else:
                 active_runs_of_dags[dag_run.dag_id] += 1
                 _update_state(dag, dag_run)
+                dag_run.notify_dagrun_state_changed()
 
     @retry_db_transaction
     def _schedule_all_dag_runs(self, guard, dag_runs, session):
@@ -1285,6 +1294,7 @@ class SchedulerJob(BaseJob):
                 msg="timed_out",
             )
 
+            dag_run.notify_dagrun_state_changed()
             return callback_to_execute
 
         if dag_run.execution_date > timezone.utcnow() and not dag.allow_future_exec_dates:
@@ -1509,7 +1519,6 @@ class SchedulerJob(BaseJob):
             self.log.warning("Failing (%s) jobs without heartbeat after %s", len(zombies), limit_dttm)
 
         for ti, file_loc in zombies:
-
             zombie_message_details = self._generate_zombie_message_details(ti)
             request = TaskCallbackRequest(
                 full_filepath=file_loc,

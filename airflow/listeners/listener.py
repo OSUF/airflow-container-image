@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import logging
-from types import ModuleType
 from typing import TYPE_CHECKING
 
 import pluggy
@@ -38,10 +37,12 @@ class ListenerManager:
     """Manage listener registration and provides hook property for calling them."""
 
     def __init__(self):
-        from airflow.listeners import spec
+        from airflow.listeners.spec import dagrun, lifecycle, taskinstance
 
         self.pm = pluggy.PluginManager("airflow")
-        self.pm.add_hookspecs(spec)
+        self.pm.add_hookspecs(lifecycle)
+        self.pm.add_hookspecs(dagrun)
+        self.pm.add_hookspecs(taskinstance)
 
     @property
     def has_listeners(self) -> bool:
@@ -53,8 +54,6 @@ class ListenerManager:
         return self.pm.hook
 
     def add_listener(self, listener):
-        if not isinstance(listener, ModuleType):
-            raise TypeError("Listener %s is not module", str(listener))
         if self.pm.is_registered(listener):
             return
         self.pm.register(listener)
@@ -66,7 +65,7 @@ class ListenerManager:
 
 
 def get_listener_manager() -> ListenerManager:
-    """Get singleton listener manager"""
+    """Get singleton listener manager."""
     global _listener_manager
     if not _listener_manager:
         _listener_manager = ListenerManager()
