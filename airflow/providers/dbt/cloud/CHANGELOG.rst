@@ -24,6 +24,14 @@
 Changelog
 ---------
 
+3.1.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add 'DbtCloudJobRunAsyncSensor' (#29695)``
+
 3.0.0
 .....
 
@@ -39,6 +47,18 @@ instance. If you wish to connect to a single-tenant, instance outside of the US,
 must use the ``host`` parameter to specify the _entire_ tenant domain name in your Airflow connection.
 
 * ``Drop Connection.schema use in DbtCloudHook  (#29166)``
+
+Features
+~~~~~~~~
+
+* ``Allow downloading of dbt Cloud artifacts to non-existent paths (#29048)``
+* ``Add deferrable mode to 'DbtCloudRunJobOperator' (#29014)``
+
+Misc
+~~~~
+
+* ``Provide more context for 'trigger_reason' in DbtCloudRunJobOperator (#28994)``
+
 
 2.3.1
 .....
