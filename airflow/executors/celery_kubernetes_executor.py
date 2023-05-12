@@ -28,7 +28,8 @@ from airflow.utils.log.logging_mixin import LoggingMixin
 
 if TYPE_CHECKING:
     from airflow.executors.base_executor import CommandType, EventBufferValueType, QueuedTaskInstanceType
-    from airflow.models.taskinstance import SimpleTaskInstance, TaskInstance, TaskInstanceKey
+    from airflow.models.taskinstance import SimpleTaskInstance, TaskInstance
+    from airflow.models.taskinstancekey import TaskInstanceKey
 
 
 class CeleryKubernetesExecutor(LoggingMixin):
@@ -197,6 +198,14 @@ class CeleryKubernetesExecutor(LoggingMixin):
         return [
             *self.celery_executor.try_adopt_task_instances(celery_tis),
             *self.kubernetes_executor.try_adopt_task_instances(kubernetes_tis),
+        ]
+
+    def cleanup_stuck_queued_tasks(self, tis: list[TaskInstance]) -> list[str]:
+        celery_tis = [ti for ti in tis if ti.queue != self.KUBERNETES_QUEUE]
+        kubernetes_tis = [ti for ti in tis if ti.queue == self.KUBERNETES_QUEUE]
+        return [
+            *self.celery_executor.cleanup_stuck_queued_tasks(celery_tis),
+            *self.kubernetes_executor.cleanup_stuck_queued_tasks(kubernetes_tis),
         ]
 
     def end(self) -> None:
