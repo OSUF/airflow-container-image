@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-AIRFLOW_VERSION="2.5.1"
+AIRFLOW_VERSION="2.6.0"
 
 CMD1=(
     docker build .
