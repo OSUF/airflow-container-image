@@ -220,7 +220,7 @@ them, you may end up with some unused image data.
 
 To clean up the Docker environment:
 
-1. Stop Breeze with ``breeze stop``. (If Breeze is already running)
+1. Stop Breeze with ``breeze down``. (If Breeze is already running)
 
 2. Run the ``breeze cleanup`` command.
 
@@ -244,6 +244,17 @@ Run this command to install Breeze (make sure to use ``-e`` flag):
 .. code-block:: bash
 
     pipx install -e ./dev/breeze
+
+
+.. note:: Note for Windows users
+
+    The ``./dev/breeze`` in command about is a PATH to sub-folder where breeze source packages are.
+    If you are on Windows, you should use Windows way to point to the ``dev/breeze`` sub-folder
+    of Airflow either as absolute or relative path. For example:
+
+    .. code-block:: bash
+
+        pipx install -e dev\breeze
 
 Once this is complete, you should have ``breeze`` binary on your PATH and available to run by ``breeze``
 command.
@@ -277,6 +288,26 @@ where it was installed.
 
 You can run ``breeze setup version`` command to see where breeze installed from and what are the current sources
 that Breeze works on
+
+.. warning:: Upgrading from earlier Python version
+
+    If you used Breeze with Python 3.7 and when running it, it will complain that it needs Python 3.8. In this
+    case you should force-reinstall Breeze with ``pipx``:
+
+        .. code-block:: bash
+
+            pipx install --force -e ./dev/breeze
+
+    .. note:: Note for Windows users
+
+        The ``./dev/breeze`` in command about is a PATH to sub-folder where breeze source packages are.
+        If you are on Windows, you should use Windows way to point to the ``dev/breeze`` sub-folder
+        of Airflow either as absolute or relative path. For example:
+
+        .. code-block:: bash
+
+            pipx install --force -e dev\breeze
+
 
 Running Breeze for the first time
 ---------------------------------
@@ -360,12 +391,12 @@ You can use additional ``breeze`` flags to choose your environment. You can spec
 version to use, and backend (the meta-data database). Thanks to that, with Breeze, you can recreate the same
 environments as we have in matrix builds in the CI.
 
-For example, you can choose to run Python 3.7 tests with MySQL as backend and with mysql version 8
+For example, you can choose to run Python 3.8 tests with MySQL as backend and with mysql version 8
 as follows:
 
 .. code-block:: bash
 
-    breeze --python 3.7 --backend mysql --mysql-version 8
+    breeze --python 3.8 --backend mysql --mysql-version 8
 
 The choices you make are persisted in the ``./.build/`` cache directory so that next time when you use the
 ``breeze`` script, it could use the values that were used previously. This way you do not have to specify
@@ -434,7 +465,16 @@ For example, this following command:
 
 will run mypy check for currently staged files inside ``airflow/`` excluding providers.
 
-You can also pass specific pre-commit flags, such as ``--all-files``:
+Selecting files to run static checks on
+........................................
+
+Pre-commits run by default on staged changes that you have locally changed. It will run it on all the
+files you run ``git add`` on and it will ignore any changes that you have modified but not staged.
+If you want to run it on all your modified files you should add them with ``git add`` command.
+
+With ``--all-files`` you can run static checks on all files in the repository. This is useful when you
+want to be sure they will not fail in CI, or when you just rebased your changes and want to
+re-run latest pre-commits on your changes, but it can take a long time (few minutes) to wait for the result.
 
 .. code-block:: bash
 
@@ -442,15 +482,32 @@ You can also pass specific pre-commit flags, such as ``--all-files``:
 
 The above will run mypy check for all files.
 
-There is a convenience ``--last-commit`` flag that you can use to run static check on last commit only:
+You can limit that by selecting specific files you want to run static checks on. You can do that by
+specifying (can be multiple times) ``--file`` flag.
+
+.. code-block:: bash
+
+     breeze static-checks -t mypy-core --file airflow/utils/code_utils.py --file airflow/utils/timeout.py
+
+The above will run mypy check for those to files (note: autocomplete should work for the file selection).
+
+However, often you do not remember files you modified and you want to run checks for files that belong
+to specific commits you already have in your branch. You can use ``breeze static check`` to run the checks
+only on changed files you have already committed to your branch - either for specific commit, for last
+commit, for all changes in your branch since you branched off from main or for specific range
+of commits you choose.
 
 .. code-block:: bash
 
      breeze static-checks -t mypy-core --last-commit
 
-The above will run mypy check for all files in the last commit.
+The above will run mypy check for all files in the last commit in your branch.
 
-There is another convenience ``--commit-ref`` flag that you can use to run static check on specific commit:
+.. code-block:: bash
+
+     breeze static-checks -t mypy-core --only-my-changes
+
+The above will run mypy check for all commits in your branch which were added since you branched off from main.
 
 .. code-block:: bash
 
@@ -459,12 +516,13 @@ There is another convenience ``--commit-ref`` flag that you can use to run stati
 The above will run mypy check for all files in the 639483d998ecac64d0fef7c5aa4634414065f690 commit.
 Any ``commit-ish`` reference from Git will work here (branch, tag, short/long hash etc.)
 
-If you ever need to get a list of the files that will be checked (for troubleshooting) use these commands:
-
 .. code-block:: bash
 
-     breeze static-checks -t identity --verbose # currently staged files
-     breeze static-checks -t identity --verbose --from-ref $(git merge-base main HEAD) --to-ref HEAD #  branch updates
+     breeze static-checks -t identity --verbose --from-ref HEAD^^^^ --to-ref HEAD
+
+The above will run the check for the last 4 commits in your branch. You can use any ``commit-ish`` references
+in ``--from-ref`` and ``--to-ref`` flags.
+
 
 Those are all available flags of ``static-checks`` command:
 
@@ -478,7 +536,7 @@ Those are all available flags of ``static-checks`` command:
 
     When you run static checks, some of the artifacts (mypy_cache) is stored in docker-compose volume
     so that it can speed up static checks execution significantly. However, sometimes, the cache might
-    get broken, in which case you should run ``breeze stop`` to clean up the cache.
+    get broken, in which case you should run ``breeze down`` to clean up the cache.
 
 
 .. note::
@@ -499,7 +557,7 @@ When you are starting airflow from local sources, www asset compilation is autom
 
 .. code-block:: bash
 
-    breeze --python 3.7 --backend mysql start-airflow
+    breeze --python 3.8 --backend mysql start-airflow
 
 
 You can also use it to start any released version of Airflow from ``PyPI`` with the
@@ -507,7 +565,7 @@ You can also use it to start any released version of Airflow from ``PyPI`` with 
 
 .. code-block:: bash
 
-    breeze start-airflow --python 3.7 --backend mysql --use-airflow-version 2.2.5
+    breeze start-airflow --python 3.8 --backend mysql --use-airflow-version 2.2.5
 
 Those are all available flags of ``start-airflow`` command:
 
@@ -663,14 +721,14 @@ You can always stop it via:
 
 .. code-block:: bash
 
-   breeze stop
+   breeze down
 
-Those are all available flags of ``stop`` command:
+Those are all available flags of ``down`` command:
 
-.. image:: ./images/breeze/output_stop.svg
-  :target: https://raw.githubusercontent.com/apache/airflow/main/images/breeze/output_stop.svg
+.. image:: ./images/breeze/output_down.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/images/breeze/output_down.svg
   :width: 100%
-  :alt: Breeze stop
+  :alt: Breeze down
 
 Troubleshooting
 ===============
@@ -679,12 +737,20 @@ If you are having problems with the Breeze environment, try the steps below. Aft
 can check whether your problem is fixed.
 
 1. If you are on macOS, check if you have enough disk space for Docker (Breeze will warn you if not).
-2. Stop Breeze with ``breeze stop``.
-3. Delete the ``.build`` directory and run ``breeze ci-image build``.
-4. Clean up Docker images via ``breeze cleanup`` command.
-5. Restart your Docker Engine and try again.
-6. Restart your machine and try again.
-7. Re-install Docker Desktop and try again.
+2. Stop Breeze with ``breeze down``.
+3. Git fetch the origin and git rebase the current branch with main branch.
+4. Delete the ``.build`` directory and run ``breeze ci-image build``.
+5. Clean up Docker images via ``breeze cleanup`` command.
+6. Restart your Docker Engine and try again.
+7. Restart your machine and try again.
+8. Re-install Docker Desktop and try again.
+
+.. note::
+  If the pip is taking a significant amount of time and your internet connection is causing pip to be unable to download the libraries within the default timeout, it is advisable to modify the default timeout as follows and run the breeze again.
+
+  .. code-block::
+
+      export PIP_DEFAULT_TIMEOUT=1000
 
 In case the problems are not solved, you can set the VERBOSE_COMMANDS variable to "true":
 
@@ -826,8 +892,7 @@ To run the whole test class:
 You can re-run the tests interactively, add extra parameters to pytest and modify the files before
 re-running the test to iterate over the tests. You can also add more flags when starting the
 ``breeze shell`` command when you run integration tests or system tests. Read more details about it
-in the ``TESTING.rst <TESTING.rst#>`` where all the test types of our are explained and more information
-on how to run them.
+in the `testing doc <TESTING.rst>`_ where all the test types and information on how to run them are explained.
 
 This applies to all kind of tests - all our tests can be run using pytest.
 
@@ -1395,10 +1460,10 @@ suffix and they need to also be paired with corresponding runtime dependency add
 
 .. code-block:: bash
 
-     breeze prod-image build --python 3.7 --additional-dev-deps "libasound2-dev" \
+     breeze prod-image build --python 3.8 --additional-dev-deps "libasound2-dev" \
         --additional-runtime-apt-deps "libasound2"
 
-Same as above but uses python 3.7.
+Same as above but uses python 3.8.
 
 Building PROD image
 ...................
@@ -1898,16 +1963,16 @@ Database volumes in Breeze
 --------------------------
 
 Breeze keeps data for all it's integration in named docker volumes. Each backend and integration
-keeps data in their own volume. Those volumes are persisted until ``breeze stop`` command.
+keeps data in their own volume. Those volumes are persisted until ``breeze down`` command.
 You can also preserve the volumes by adding flag ``--preserve-volumes`` when you run the command.
 Then, next time when you start Breeze, it will have the data pre-populated.
 
-Those are all available flags of ``stop`` command:
+Those are all available flags of ``down`` command:
 
-.. image:: ./images/breeze/output-stop.svg
-  :target: https://raw.githubusercontent.com/apache/airflow/main/images/breeze/output-stop.svg
+.. image:: ./images/breeze/output-down.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/images/breeze/output-down.svg
   :width: 100%
-  :alt: Breeze stop
+  :alt: Breeze down
 
 
 Additional tools
@@ -1955,7 +2020,7 @@ Finally you can specify ``--integration all-testable`` to start all testable int
 ``--integration all`` to enable all integrations.
 
 Once integration is started, it will continue to run until the environment is stopped with
-``breeze stop`` command. or restarted via ``breeze restart`` command
+``breeze down`` command.
 
 Note that running integrations uses significant resources - CPU and memory.
 
