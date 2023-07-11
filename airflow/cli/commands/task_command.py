@@ -131,7 +131,12 @@ def _get_dag_run(
         dag_run_execution_date = pendulum.instance(timezone.utcnow())
 
     if create_if_necessary == "memory":
-        dag_run = DagRun(dag.dag_id, run_id=exec_date_or_run_id, execution_date=dag_run_execution_date)
+        dag_run = DagRun(
+            dag.dag_id,
+            run_id=exec_date_or_run_id,
+            execution_date=dag_run_execution_date,
+            data_interval=dag.timetable.infer_manual_data_interval(run_after=dag_run_execution_date),
+        )
         return dag_run, True
     elif create_if_necessary == "db":
         dag_run = dag.create_dagrun(
@@ -398,7 +403,7 @@ def task_run(args, dag: DAG | None = None) -> TaskReturnCode | None:
         print(f"Loading pickle id: {args.pickle}")
         _dag = get_dag_by_pickle(args.pickle)
     elif not dag:
-        _dag = get_dag(args.subdir, args.dag_id)
+        _dag = get_dag(args.subdir, args.dag_id, args.read_from_db)
     else:
         _dag = dag
     task = _dag.get_task(task_id=args.task_id)
