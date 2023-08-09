@@ -154,23 +154,15 @@ class KubernetesPodTrigger(BaseTrigger):
                 self.log.debug("Container %s status: %s", self.base_container_name, container_state)
 
                 if container_state == ContainerState.TERMINATED:
-                    if pod_status not in PodPhase.terminal_states:
-                        self.log.info(
-                            "Pod %s is still running. Sleeping for %s seconds.",
-                            self.pod_name,
-                            self.poll_interval,
-                        )
-                        await asyncio.sleep(self.poll_interval)
-                    else:
-                        yield TriggerEvent(
-                            {
-                                "name": self.pod_name,
-                                "namespace": self.pod_namespace,
-                                "status": "success",
-                                "message": "All containers inside pod have started successfully.",
-                            }
-                        )
-                        return
+                    yield TriggerEvent(
+                        {
+                            "name": self.pod_name,
+                            "namespace": self.pod_namespace,
+                            "status": "success",
+                            "message": "All containers inside pod have started successfully.",
+                        }
+                    )
+                    return
                 elif self.should_wait(pod_phase=pod_status, container_state=container_state):
                     self.log.info("Container is not completed and still working.")
 
@@ -254,7 +246,7 @@ class KubernetesPodTrigger(BaseTrigger):
         if pod_containers is None:
             return ContainerState.UNDEFINED
 
-        container = [c for c in pod_containers if c.name == self.base_container_name][0]
+        container = next(c for c in pod_containers if c.name == self.base_container_name)
 
         for state in (ContainerState.RUNNING, ContainerState.WAITING, ContainerState.TERMINATED):
             state_obj = getattr(container.state, state)
