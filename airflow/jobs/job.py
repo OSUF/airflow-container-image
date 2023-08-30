@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from functools import cached_property
 from time import sleep
-from typing import Callable, NoReturn
+from typing import TYPE_CHECKING, Callable, NoReturn
 
 from sqlalchemy import Column, Index, Integer, String, case, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import backref, foreign, relationship
-from sqlalchemy.orm.session import Session, make_transient
+from sqlalchemy.orm.session import make_transient
 
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException
@@ -41,6 +41,9 @@ from airflow.utils.platform import getuser
 from airflow.utils.session import NEW_SESSION, create_session, provide_session
 from airflow.utils.sqlalchemy import UtcDateTime
 from airflow.utils.state import JobState
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm.session import Session
 
 
 def _resolve_dagrun_model():
@@ -147,13 +150,13 @@ class Job(Base, LoggingMixin):
 
     @provide_session
     def kill(self, session: Session = NEW_SESSION) -> NoReturn:
-        """Handles on_kill callback and updates state in database."""
+        """Handle on_kill callback and updates state in database."""
         job = session.scalar(select(Job).where(Job.id == self.id).limit(1))
         job.end_date = timezone.utcnow()
         try:
             self.on_kill()
         except Exception as e:
-            self.log.error("on_kill() method failed: %s", str(e))
+            self.log.error("on_kill() method failed: %s", e)
         session.merge(job)
         session.commit()
         raise AirflowException("Job shut down externally.")
@@ -190,7 +193,7 @@ class Job(Base, LoggingMixin):
             session.merge(self)
             previous_heartbeat = self.latest_heartbeat
 
-            if self.state in (JobState.SHUTDOWN, JobState.RESTARTING):
+            if self.state == JobState.RESTARTING:
                 # TODO: Make sure it is AIP-44 compliant
                 self.kill()
 
@@ -222,7 +225,7 @@ class Job(Base, LoggingMixin):
 
     @provide_session
     def prepare_for_execution(self, session: Session = NEW_SESSION):
-        """Prepares the job for execution."""
+        """Prepare the job for execution."""
         Stats.incr(self.__class__.__name__.lower() + "_start", 1, 1)
         self.state = JobState.RUNNING
         self.start_date = timezone.utcnow()
@@ -240,7 +243,7 @@ class Job(Base, LoggingMixin):
 
     @provide_session
     def most_recent_job(self, session: Session = NEW_SESSION) -> Job | None:
-        """Returns the most recent job of this type, if any, based on last heartbeat received."""
+        """Return the most recent job of this type, if any, based on last heartbeat received."""
         return most_recent_job(self.job_type, session=session)
 
 
@@ -272,7 +275,7 @@ def run_job(
     job: Job | JobPydantic, execute_callable: Callable[[], int | None], session: Session = NEW_SESSION
 ) -> int | None:
     """
-    Runs the job.
+    Run the job.
 
     The Job is always an ORM object and setting the state is happening within the
     same DB session and the session is kept open throughout the whole execution.
@@ -293,7 +296,7 @@ def run_job(
 
 def execute_job(job: Job | JobPydantic, execute_callable: Callable[[], int | None]) -> int | None:
     """
-    Executes the job.
+    Execute the job.
 
     Job execution requires no session as generally executing session does not require an
     active database connection. The session might be temporary acquired and used if the job
@@ -331,7 +334,7 @@ def perform_heartbeat(
     job: Job | JobPydantic, heartbeat_callback: Callable[[Session], None], only_if_necessary: bool
 ) -> None:
     """
-    Performs heartbeat for the Job passed to it,optionally checking if it is necessary.
+    Perform heartbeat for the Job passed to it,optionally checking if it is necessary.
 
     :param job: job to perform heartbeat for
     :param heartbeat_callback: callback to run by the heartbeat

@@ -26,10 +26,10 @@ A client for AWS Batch services.
 """
 from __future__ import annotations
 
-import itertools as it
+import itertools
 from random import uniform
 from time import sleep
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import botocore.client
 import botocore.exceptions
@@ -37,8 +37,10 @@ import botocore.waiter
 
 from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
-from airflow.providers.amazon.aws.utils.task_log_fetcher import AwsTaskLogFetcher
 from airflow.typing_compat import Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from airflow.providers.amazon.aws.utils.task_log_fetcher import AwsTaskLogFetcher
 
 
 @runtime_checkable
@@ -488,7 +490,7 @@ class BatchClientHook(AwsBaseHook):
 
         # cross stream names with options (i.e. attempts X nodes) to generate all log infos
         result = []
-        for stream, option in it.product(stream_names, log_options):
+        for stream, option in itertools.product(stream_names, log_options):
             result.append(
                 {
                     "awslogs_stream_name": stream,
@@ -552,13 +554,10 @@ class BatchClientHook(AwsBaseHook):
     @staticmethod
     def exponential_delay(tries: int) -> float:
         """
-        An exponential back-off delay, with random jitter.
+        Apply an exponential back-off delay, with random jitter.
 
         There is a maximum interval of 10 minutes (with random jitter between 3 and 10 minutes).
         This is used in the :py:meth:`.poll_for_job_status` method.
-
-        :param tries: Number of tries
-
 
         Examples of behavior:
 
@@ -589,6 +588,8 @@ class BatchClientHook(AwsBaseHook):
 
             - https://docs.aws.amazon.com/general/latest/gr/api-retries.html
             - https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+
+        :param tries: Number of tries
         """
         max_interval = 600.0  # results in 3 to 10 minute delay
         delay = 1 + pow(tries * 0.6, 2)

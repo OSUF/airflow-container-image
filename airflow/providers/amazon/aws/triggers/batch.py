@@ -17,17 +17,19 @@
 from __future__ import annotations
 
 import asyncio
-import itertools as it
+import itertools
 from functools import cached_property
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import WaiterError
 from deprecated import deprecated
 
-from airflow.providers.amazon.aws.hooks.base_aws import AwsGenericHook
 from airflow.providers.amazon.aws.hooks.batch_client import BatchClientHook
 from airflow.providers.amazon.aws.triggers.base import AwsBaseWaiterTrigger
 from airflow.triggers.base import BaseTrigger, TriggerEvent
+
+if TYPE_CHECKING:
+    from airflow.providers.amazon.aws.hooks.base_aws import AwsGenericHook
 
 
 @deprecated(reason="use BatchJobTrigger instead")
@@ -58,7 +60,7 @@ class BatchOperatorTrigger(BaseTrigger):
         self.poll_interval = poll_interval
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
-        """Serializes BatchOperatorTrigger arguments and classpath."""
+        """Serialize BatchOperatorTrigger arguments and classpath."""
         return (
             "airflow.providers.amazon.aws.triggers.batch.BatchOperatorTrigger",
             {
@@ -139,7 +141,7 @@ class BatchSensorTrigger(BaseTrigger):
         self.poke_interval = poke_interval
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
-        """Serializes BatchSensorTrigger arguments and classpath."""
+        """Serialize BatchSensorTrigger arguments and classpath."""
         return (
             "airflow.providers.amazon.aws.triggers.batch.BatchSensorTrigger",
             {
@@ -162,7 +164,7 @@ class BatchSensorTrigger(BaseTrigger):
         """
         async with self.hook.async_conn as client:
             waiter = self.hook.get_waiter("batch_job_complete", deferrable=True, client=client)
-            for attempt in it.count(1):
+            for attempt in itertools.count(1):
                 try:
                     await waiter.wait(
                         jobs=[self.job_id],
