@@ -31,7 +31,6 @@ import pendulum
 from pendulum.parsing.exceptions import ParserError
 from sqlalchemy import select
 from sqlalchemy.orm.exc import NoResultFound
-from typing_extensions import Literal
 
 from airflow import settings
 from airflow.cli.simple_table import AirflowConsole
@@ -47,9 +46,10 @@ from airflow.models.dagrun import DagRun
 from airflow.models.operator import needs_expansion
 from airflow.models.param import ParamsDict
 from airflow.models.taskinstance import TaskReturnCode
-from airflow.settings import IS_K8S_EXECUTOR_POD
+from airflow.settings import IS_EXECUTOR_CONTAINER, IS_K8S_EXECUTOR_POD
 from airflow.ti_deps.dep_context import DepContext
 from airflow.ti_deps.dependencies_deps import SCHEDULER_QUEUED_DEPS
+from airflow.typing_compat import Literal
 from airflow.utils import cli as cli_utils
 from airflow.utils.cli import (
     get_dag,
@@ -67,11 +67,13 @@ from airflow.utils.net import get_hostname
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.session import NEW_SESSION, create_session, provide_session
 from airflow.utils.state import DagRunState
+from airflow.utils.task_instance_session import set_current_task_instance_session
 
 if TYPE_CHECKING:
     from sqlalchemy.orm.session import Session
 
     from airflow.models.operator import Operator
+    from airflow.serialization.pydantic.dag_run import DagRunPydantic
 
 log = logging.getLogger(__name__)
 
@@ -93,7 +95,7 @@ def _get_dag_run(
     create_if_necessary: CreateIfNecessary,
     exec_date_or_run_id: str | None = None,
     session: Session,
-) -> tuple[DagRun, bool]:
+) -> tuple[DagRun | DagRunPydantic, bool]:
     """Try to retrieve a DAG run from a string representing either a run ID or logical date.
 
     This checks DAG runs like this:
@@ -324,7 +326,7 @@ def _move_task_handlers_to_root(ti: TaskInstance) -> Generator[None, None, None]
     console_handler = next((h for h in root_logger.handlers if h.name == "console"), None)
     with LoggerMutationHelper(root_logger), LoggerMutationHelper(ti.log) as task_helper:
         task_helper.move(root_logger)
-        if IS_K8S_EXECUTOR_POD:
+        if IS_K8S_EXECUTOR_POD or IS_EXECUTOR_CONTAINER:
             if console_handler and console_handler not in root_logger.handlers:
                 root_logger.addHandler(console_handler)
         yield
@@ -649,7 +651,8 @@ def task_render(args, dag: DAG | None = None) -> None:
     ti, _ = _get_ti(
         task, args.map_index, exec_date_or_run_id=args.execution_date_or_run_id, create_if_necessary="memory"
     )
-    ti.render_templates()
+    with create_session() as session, set_current_task_instance_session(session=session):
+        ti.render_templates()
     for attr in task.template_fields:
         print(
             textwrap.dedent(

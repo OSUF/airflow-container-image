@@ -41,10 +41,9 @@ def clean_stackdriver_handlers():
     yield
     for handler_ref in reversed(logging._handlerList[:]):
         handler = handler_ref()
-        if not isinstance(handler, StackdriverTaskHandler):
-            continue
-        logging._removeHandlerRef(handler_ref)
-        del handler
+        if isinstance(handler, StackdriverTaskHandler):
+            logging._removeHandlerRef(handler_ref)
+            del handler
 
 
 @pytest.mark.usefixtures("clean_stackdriver_handlers")
@@ -68,6 +67,7 @@ def test_should_pass_message_to_client(mock_client, mock_get_creds_and_project_i
     mock_client.assert_called_once_with(credentials="creds", client_info=mock.ANY, project="project_id")
 
 
+@pytest.mark.db_test
 class TestStackdriverLoggingHandlerTask:
     DAG_ID = "dag_for_testing_stackdriver_file_task_handler"
     TASK_ID = "task_for_testing_stackdriver_task_handler"

@@ -72,7 +72,7 @@ def delete_dag(dag_id: str, keep_records_in_log: bool = True, session: Session =
         )
     )
 
-    dags_to_delete = [dag_id for dag_id, in dags_to_delete_query]
+    dags_to_delete = [dag_id for (dag_id,) in dags_to_delete_query]
 
     # Scheduler removes DAGs without files from serialized_dag table every dag_dir_list_interval.
     # There may be a lag, so explicitly removes serialized DAG here.
@@ -82,9 +82,7 @@ def delete_dag(dag_id: str, keep_records_in_log: bool = True, session: Session =
     count = 0
 
     for model in get_sqla_model_classes():
-        if hasattr(model, "dag_id"):
-            if keep_records_in_log and model.__name__ == "Log":
-                continue
+        if hasattr(model, "dag_id") and (not keep_records_in_log or model.__name__ != "Log"):
             count += session.execute(
                 delete(model)
                 .where(model.dag_id.in_(dags_to_delete))

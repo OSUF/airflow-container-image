@@ -19,30 +19,22 @@ from __future__ import annotations
 
 import datetime
 from functools import reduce
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 from unittest import mock
 from unittest.mock import call
 
 import pendulum
 import pytest
-from sqlalchemy.orm.session import Session
 
 from airflow import settings
 from airflow.callbacks.callback_requests import DagCallbackRequest
 from airflow.decorators import setup, task, task_group, teardown
 from airflow.exceptions import AirflowException
-from airflow.models import (
-    DAG,
-    DagBag,
-    DagModel,
-    DagRun,
-    TaskInstance,
-    TaskInstance as TI,
-    clear_task_instances,
-)
 from airflow.models.baseoperator import BaseOperator
-from airflow.models.dagrun import DagRunNote
-from airflow.models.taskinstance import TaskInstanceNote
+from airflow.models.dag import DAG, DagModel
+from airflow.models.dagbag import DagBag
+from airflow.models.dagrun import DagRun, DagRunNote
+from airflow.models.taskinstance import TaskInstance, TaskInstanceNote, clear_task_instances
 from airflow.models.taskmap import TaskMap
 from airflow.models.taskreschedule import TaskReschedule
 from airflow.operators.empty import EmptyOperator
@@ -58,6 +50,13 @@ from tests.test_utils import db
 from tests.test_utils.config import conf_vars
 from tests.test_utils.mock_operators import MockOperator
 
+pytestmark = pytest.mark.db_test
+
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm.session import Session
+
+TI = TaskInstance
 DEFAULT_DATE = pendulum.instance(_DEFAULT_DATE)
 
 
@@ -91,9 +90,7 @@ class TestDagRun:
         session: Session,
     ):
         now = timezone.utcnow()
-        if execution_date is None:
-            execution_date = now
-        execution_date = pendulum.instance(execution_date)
+        execution_date = pendulum.instance(execution_date or now)
         if is_backfill:
             run_type = DagRunType.BACKFILL_JOB
             data_interval = dag.infer_automated_data_interval(execution_date)
@@ -134,6 +131,7 @@ class TestDagRun:
         ti0.refresh_from_db()
         dr0 = session.query(DagRun).filter(DagRun.dag_id == dag_id, DagRun.execution_date == now).first()
         assert dr0.state == state
+        assert dr0.clear_number < 1
 
     @pytest.mark.parametrize("state", [DagRunState.SUCCESS, DagRunState.FAILED])
     def test_clear_task_instances_for_backfill_finished_dagrun(self, state, session):
@@ -152,6 +150,7 @@ class TestDagRun:
         ti0.refresh_from_db()
         dr0 = session.query(DagRun).filter(DagRun.dag_id == dag_id, DagRun.execution_date == now).first()
         assert dr0.state == DagRunState.QUEUED
+        assert dr0.clear_number == 1
 
     def test_dagrun_find(self, session):
         now = timezone.utcnow()

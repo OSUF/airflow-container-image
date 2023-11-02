@@ -28,7 +28,6 @@ from azure.cosmos.cosmos_client import CosmosClient
 from airflow.exceptions import AirflowException
 from airflow.models import Connection
 from airflow.providers.microsoft.azure.hooks.cosmos import AzureCosmosDBHook
-from tests.test_utils.providers import get_provider_min_airflow_version
 
 
 class TestAzureCosmosDbHook:
@@ -107,16 +106,11 @@ class TestAzureCosmosDbHook:
     @mock.patch("airflow.providers.microsoft.azure.hooks.cosmos.CosmosClient")
     def test_upsert_document_default(self, mock_cosmos):
         test_id = str(uuid.uuid4())
-        # fmt: off
-        (mock_cosmos
-         .return_value
-         .get_database_client
-         .return_value
-         .get_container_client
-         .return_value
-         .upsert_item
-         .return_value) = {'id': test_id}
-        # fmt: on
+
+        (
+            mock_cosmos.return_value.get_database_client.return_value.get_container_client.return_value.upsert_item.return_value
+        ) = {"id": test_id}
+
         hook = AzureCosmosDBHook(azure_cosmos_conn_id="azure_cosmos_test_key_id")
         returned_item = hook.upsert_document({"id": test_id})
         expected_calls = [
@@ -133,16 +127,11 @@ class TestAzureCosmosDbHook:
     @mock.patch("airflow.providers.microsoft.azure.hooks.cosmos.CosmosClient")
     def test_upsert_document(self, mock_cosmos):
         test_id = str(uuid.uuid4())
-        # fmt: off
-        (mock_cosmos
-         .return_value
-         .get_database_client
-         .return_value
-         .get_container_client
-         .return_value
-         .upsert_item
-         .return_value) = {'id': test_id}
-        # fmt: on
+
+        (
+            mock_cosmos.return_value.get_database_client.return_value.get_container_client.return_value.upsert_item.return_value
+        ) = {"id": test_id}
+
         hook = AzureCosmosDBHook(azure_cosmos_conn_id="azure_cosmos_test_key_id")
         returned_item = hook.upsert_document(
             {"data1": "somedata"},
@@ -249,23 +238,3 @@ class TestAzureCosmosDbHook:
         status, msg = hook.test_connection()
         assert status is False
         assert msg == "Authentication failed."
-
-    def test_get_ui_field_behaviour_placeholders(self):
-        """
-        Check that ensure_prefixes decorator working properly
-
-        Note: remove this test and the _ensure_prefixes decorator after min airflow version >= 2.5.0
-        """
-        assert list(AzureCosmosDBHook.get_ui_field_behaviour()["placeholders"].keys()) == [
-            "login",
-            "password",
-            "database_name",
-            "collection_name",
-            "subscription_id",
-            "resource_group_name",
-        ]
-        if get_provider_min_airflow_version("apache-airflow-providers-microsoft-azure") >= (2, 5):
-            raise Exception(
-                "You must now remove `_ensure_prefixes` from azure utils."
-                " The functionality is now taken care of by providers manager."
-            )

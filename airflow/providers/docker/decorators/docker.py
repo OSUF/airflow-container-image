@@ -20,8 +20,8 @@ import base64
 import inspect
 import os
 import pickle
+import textwrap
 from tempfile import TemporaryDirectory
-from textwrap import dedent
 from typing import TYPE_CHECKING, Callable, Sequence
 
 import dill
@@ -89,7 +89,7 @@ class _DockerDecoratedOperator(DecoratedOperator, DockerOperator):
         command = "placeholder command"
         self.python_command = python_command
         self.expect_airflow = expect_airflow
-        self.pickling_library = dill if use_dill else pickle
+        self.use_dill = use_dill
         super().__init__(
             command=command, retrieve_output=True, retrieve_output_path="/tmp/script.out", **kwargs
         )
@@ -139,9 +139,15 @@ class _DockerDecoratedOperator(DecoratedOperator, DockerOperator):
     # TODO: Remove me once this provider min supported Airflow version is 2.6
     def get_python_source(self):
         raw_source = inspect.getsource(self.python_callable)
-        res = dedent(raw_source)
+        res = textwrap.dedent(raw_source)
         res = remove_task_decorator(res, self.custom_operator_name)
         return res
+
+    @property
+    def pickling_library(self):
+        if self.use_dill:
+            return dill
+        return pickle
 
 
 def docker_task(

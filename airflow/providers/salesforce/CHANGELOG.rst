@@ -27,6 +27,27 @@
 Changelog
 ---------
 
+5.5.0
+.....
+
+.. note::
+  This release of provider is only available for Airflow 2.5+ as explained in the
+  `Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>`_.
+
+Misc
+~~~~
+
+* ``Bump min airflow version of providers (#34728)``
+
+5.4.3
+.....
+
+Misc
+~~~~
+
+* ``Always use 'Literal' from 'typing_extensions' (#33794)``
+* ``Improve modules import in Airflow providers by some of them into a type-checking block (#33754)``
+
 5.4.2
 .....
 

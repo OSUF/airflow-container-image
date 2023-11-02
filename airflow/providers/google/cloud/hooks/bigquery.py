@@ -123,7 +123,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         self.location = location
         self.priority = priority
         self.running_job_id: str | None = None
-        self.api_resource_configs: dict = api_resource_configs if api_resource_configs else {}
+        self.api_resource_configs: dict = api_resource_configs or {}
         self.labels = labels
         self.credentials_path = "bigquery_hook_credentials.json"
 
@@ -268,9 +268,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
 
         credentials, project_id = self.get_credentials_and_project_id()
 
-        return read_gbq(
-            sql, project_id=project_id, dialect=dialect, verbose=False, credentials=credentials, **kwargs
-        )
+        return read_gbq(sql, project_id=project_id, dialect=dialect, credentials=credentials, **kwargs)
 
     @GoogleBaseHook.fallback_to_default_project_id
     def table_exists(self, dataset_id: str, table_id: str, project_id: str) -> bool:
@@ -661,7 +659,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             ],
             "googleSheetsOptions": ["skipLeadingRows"],
         }
-        if source_format in src_fmt_to_param_mapping.keys():
+        if source_format in src_fmt_to_param_mapping:
             valid_configs = src_fmt_to_configs_mapping[src_fmt_to_param_mapping[source_format]]
             src_fmt_configs = _validate_src_fmt_configs(
                 source_format, src_fmt_configs, valid_configs, backward_compatibility_configs
@@ -1386,7 +1384,6 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         def _build_new_schema(
             current_schema: list[dict[str, Any]], schema_fields_updates: list[dict[str, Any]]
         ) -> list[dict[str, Any]]:
-
             # Turn schema_field_updates into a dict keyed on field names
             schema_fields_updates_dict = {field["name"]: field for field in deepcopy(schema_fields_updates)}
 
@@ -1728,7 +1725,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # we check to make sure the passed source format is valid
         # if it's not, we raise a ValueError
         # Refer to this link for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat # noqa
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.tableDefinitions.(key).sourceFormat
 
         if schema_fields is None and not autodetect:
             raise ValueError("You must either pass a schema or autodetect=True.")
@@ -2140,7 +2137,7 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
         # BigQuery also allows you to define how you want a table's schema to change
         # as a side effect of a query job
         # for more details:
-        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions  # noqa
+        #   https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs#configuration.query.schemaUpdateOptions
 
         allowed_schema_update_options = ["ALLOW_FIELD_ADDITION", "ALLOW_FIELD_RELAXATION"]
 
@@ -2208,26 +2205,24 @@ class BigQueryHook(GoogleBaseHook, DbApiHook):
             if param_name == "schemaUpdateOptions" and param:
                 self.log.info("Adding experimental 'schemaUpdateOptions': %s", schema_update_options)
 
-            if param_name != "destinationTable":
-                continue
-
-            for key in ["projectId", "datasetId", "tableId"]:
-                if key not in configuration["query"]["destinationTable"]:
-                    raise ValueError(
-                        "Not correct 'destinationTable' in "
-                        "api_resource_configs. 'destinationTable' "
-                        "must be a dict with {'projectId':'', "
-                        "'datasetId':'', 'tableId':''}"
+            if param_name == "destinationTable":
+                for key in ["projectId", "datasetId", "tableId"]:
+                    if key not in configuration["query"]["destinationTable"]:
+                        raise ValueError(
+                            "Not correct 'destinationTable' in "
+                            "api_resource_configs. 'destinationTable' "
+                            "must be a dict with {'projectId':'', "
+                            "'datasetId':'', 'tableId':''}"
+                        )
+                else:
+                    configuration["query"].update(
+                        {
+                            "allowLargeResults": allow_large_results,
+                            "flattenResults": flatten_results,
+                            "writeDisposition": write_disposition,
+                            "createDisposition": create_disposition,
+                        }
                     )
-
-            configuration["query"].update(
-                {
-                    "allowLargeResults": allow_large_results,
-                    "flattenResults": flatten_results,
-                    "writeDisposition": write_disposition,
-                    "createDisposition": create_disposition,
-                }
-            )
 
         if (
             "useLegacySql" in configuration["query"]
@@ -2376,7 +2371,7 @@ class BigQueryBaseCursor(LoggingMixin):
         self.use_legacy_sql = use_legacy_sql
         if api_resource_configs:
             _validate_value("api_resource_configs", api_resource_configs, dict)
-        self.api_resource_configs: dict = api_resource_configs if api_resource_configs else {}
+        self.api_resource_configs: dict = api_resource_configs or {}
         self.running_job_id: str | None = None
         self.location = location
         self.num_retries = num_retries
@@ -2878,12 +2873,7 @@ class BigQueryCursor(BigQueryBaseCursor):
 
         A sequence of sequences (e.g. a list of tuples) is returned.
         """
-        result = []
-        while True:
-            one = self.fetchone()
-            if one is None:
-                break
-            result.append(one)
+        result = list(iter(self.fetchone, None))
         return result
 
     def get_arraysize(self) -> int:
@@ -2928,7 +2918,7 @@ def _bind_parameters(operation: str, parameters: dict) -> str:
     """Helper method that binds parameters to a SQL query."""
     # inspired by MySQL Python Connector (conversion.py)
     string_parameters = {}  # type dict[str, str]
-    for (name, value) in parameters.items():
+    for name, value in parameters.items():
         if value is None:
             string_parameters[name] = "NULL"
         elif isinstance(value, str):
@@ -3103,16 +3093,16 @@ class BigQueryAsyncHook(GoogleBaseAsyncHook):
         with await self.service_file_as_context() as f:
             return Job(job_id=job_id, project=project_id, service_file=f, session=cast(Session, session))
 
-    async def get_job_status(self, job_id: str | None, project_id: str | None = None) -> str:
+    async def get_job_status(self, job_id: str | None, project_id: str | None = None) -> dict[str, str]:
         async with ClientSession() as s:
             job_client = await self.get_job_instance(project_id, job_id, s)
             job = await job_client.get_job()
             status = job.get("status", {})
             if status["state"] == "DONE":
                 if "errorResult" in status:
-                    return "error"
-                return "success"
-            return status["state"].lower()
+                    return {"status": "error", "message": status["errorResult"]["message"]}
+                return {"status": "success", "message": "Job completed"}
+            return {"status": status["state"].lower(), "message": "Job running"}
 
     async def get_job_output(
         self,
@@ -3182,14 +3172,11 @@ class BigQueryAsyncHook(GoogleBaseAsyncHook):
         is_numeric_value_check = isinstance(pass_value_conv, float)
 
         error_msg = (
-            "Test failed.\nPass value:{pass_value_conv}\n"
-            "Tolerance:{tolerance_pct_str}\n"
-            "Query:\n{sql}\nResults:\n{records!s}"
-        ).format(
-            pass_value_conv=pass_value_conv,
-            tolerance_pct_str=f"{tolerance:.1%}" if tolerance else None,
-            sql=sql,
-            records=records,
+            f"Test failed.\n"
+            f"Pass value:{pass_value_conv}\n"
+            f"Tolerance:{f'{tolerance:.1%}' if tolerance else None}\n"
+            f"Query:\n{sql}\n"
+            f"Results:\n{records!s}"
         )
 
         if not is_numeric_value_check:

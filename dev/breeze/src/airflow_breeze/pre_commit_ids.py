@@ -24,7 +24,6 @@ from __future__ import annotations
 
 PRE_COMMIT_LIST = [
     "all",
-    "black",
     "blacken-docs",
     "check-aiobotocore-optional",
     "check-airflow-k8s-not-used",
@@ -86,6 +85,7 @@ PRE_COMMIT_LIST = [
     "end-of-file-fixer",
     "fix-encoding-pragma",
     "flynt",
+    "generate-pypi-readme",
     "identity",
     "insert-license",
     "lint-chart-schema",
@@ -105,6 +105,7 @@ PRE_COMMIT_LIST = [
     "replace-bad-characters",
     "rst-backticks",
     "ruff",
+    "ruff-format",
     "shellcheck",
     "trailing-whitespace",
     "ts-compile-format-lint-www",
@@ -124,5 +125,6 @@ PRE_COMMIT_LIST = [
     "update-supported-versions",
     "update-vendored-in-k8s-json-schema",
     "update-version",
+    "validate-pyproject",
     "yamllint",
 ]

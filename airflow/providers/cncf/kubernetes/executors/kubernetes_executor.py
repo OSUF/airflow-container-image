@@ -23,6 +23,7 @@ KubernetesExecutor.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import multiprocessing
@@ -35,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 
 from sqlalchemy import select, update
 
-from airflow.exceptions import AirflowException
+from airflow.providers.cncf.kubernetes.pod_generator import PodMutationHookException, PodReconciliationError
 
 try:
     from airflow.cli.cli_config import (
@@ -97,14 +98,6 @@ if TYPE_CHECKING:
     from airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils import (
         AirflowKubernetesScheduler,
     )
-
-
-class PodMutationHookException(AirflowException):
-    """Raised when exception happens during Pod Mutation Hook execution."""
-
-
-class PodReconciliationError(AirflowException):
-    """Raised when an error is encountered while trying to merge pod configs."""
 
 
 # CLI Args
@@ -231,6 +224,36 @@ class KubernetesExecutor(BaseExecutor):
             if time.time() - timestamp > allowed_age:
                 del self.last_handled[key]
 
+        if not queued_tis:
+            return
+
+        # airflow worker label selector batch call
+        kwargs = {"label_selector": f"airflow-worker={self._make_safe_label_value(str(self.job_id))}"}
+        if self.kube_config.kube_client_request_args:
+            kwargs.update(self.kube_config.kube_client_request_args)
+        pod_list = self._list_pods(kwargs)
+
+        # create a set against pod query label fields
+        label_search_set = set()
+        for pod in pod_list:
+            dag_id = pod.metadata.labels.get("dag_id", None)
+            task_id = pod.metadata.labels.get("task_id", None)
+            airflow_worker = pod.metadata.labels.get("airflow-worker", None)
+            map_index = pod.metadata.labels.get("map_index", None)
+            run_id = pod.metadata.labels.get("run_id", None)
+            execution_date = pod.metadata.labels.get("execution_date", None)
+            if dag_id is None or task_id is None or airflow_worker is None:
+                continue
+            label_search_base_str = f"dag_id={dag_id},task_id={task_id},airflow-worker={airflow_worker}"
+            if map_index is not None:
+                label_search_base_str += f",map_index={map_index}"
+            if run_id is not None:
+                label_search_str = f"{label_search_base_str},run_id={run_id}"
+                label_search_set.add(label_search_str)
+            if execution_date is not None:
+                label_search_str = f"{label_search_base_str},execution_date={execution_date}"
+                label_search_set.add(label_search_str)
+
         for ti in queued_tis:
             self.log.debug("Checking task instance %s", ti)
 
@@ -247,21 +270,16 @@ class KubernetesExecutor(BaseExecutor):
             if ti.map_index >= 0:
                 # Old tasks _couldn't_ be mapped, so we don't have to worry about compat
                 base_label_selector += f",map_index={ti.map_index}"
-            kwargs = {"label_selector": base_label_selector}
-            if self.kube_config.kube_client_request_args:
-                kwargs.update(**self.kube_config.kube_client_request_args)
 
             # Try run_id first
-            kwargs["label_selector"] += ",run_id=" + self._make_safe_label_value(ti.run_id)
-            pod_list = self._list_pods(kwargs)
-            if pod_list:
+            label_search_str = f"{base_label_selector},run_id={self._make_safe_label_value(ti.run_id)}"
+            if label_search_str in label_search_set:
                 continue
             # Fallback to old style of using execution_date
-            kwargs[
-                "label_selector"
-            ] = f"{base_label_selector},execution_date={self._make_safe_label_value(ti.execution_date)}"
-            pod_list = self._list_pods(kwargs)
-            if pod_list:
+            label_search_str = (
+                f"{base_label_selector},execution_date={self._make_safe_label_value(ti.execution_date)}"
+            )
+            if label_search_str in label_search_set:
                 continue
             self.log.info("TaskInstance: %s found in queued state but was not launched, rescheduling", ti)
             session.execute(
@@ -276,7 +294,7 @@ class KubernetesExecutor(BaseExecutor):
             )
 
     def start(self) -> None:
-        """Starts the executor."""
+        """Start the executor."""
         self.log.info("Start Kubernetes executor")
         self.scheduler_job_id = str(self.job_id)
         self.log.debug("Start with scheduler_job_id: %s", self.scheduler_job_id)
@@ -309,7 +327,7 @@ class KubernetesExecutor(BaseExecutor):
         queue: str | None = None,
         executor_config: Any | None = None,
     ) -> None:
-        """Executes task asynchronously."""
+        """Execute task asynchronously."""
         if TYPE_CHECKING:
             assert self.task_queue
 
@@ -354,8 +372,8 @@ class KubernetesExecutor(BaseExecutor):
         self.kube_scheduler.sync()
 
         last_resource_version: dict[str, str] = defaultdict(lambda: "0")
-        while True:
-            try:
+        with contextlib.suppress(Empty):
+            while True:
                 results = self.result_queue.get_nowait()
                 try:
                     key, state, pod_name, namespace, resource_version = results
@@ -373,8 +391,6 @@ class KubernetesExecutor(BaseExecutor):
                         self.result_queue.put(results)
                 finally:
                     self.result_queue.task_done()
-            except Empty:
-                break
 
         from airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils import ResourceVersion
 
@@ -386,8 +402,8 @@ class KubernetesExecutor(BaseExecutor):
 
         from kubernetes.client.rest import ApiException
 
-        for _ in range(self.kube_config.worker_pods_creation_batch_size):
-            try:
+        with contextlib.suppress(Empty):
+            for _ in range(self.kube_config.worker_pods_creation_batch_size):
                 task = self.task_queue.get_nowait()
 
                 try:
@@ -423,8 +439,6 @@ class KubernetesExecutor(BaseExecutor):
                     self.fail(key, e)
                 finally:
                     self.task_queue.task_done()
-            except Empty:
-                break
 
         # Run any pending timed events
         next_event = self.event_scheduler.run(blocking=False)
@@ -449,10 +463,10 @@ class KubernetesExecutor(BaseExecutor):
         if self.kube_config.delete_worker_pods:
             if state != TaskInstanceState.FAILED or self.kube_config.delete_worker_pods_on_failure:
                 self.kube_scheduler.delete_pod(pod_name=pod_name, namespace=namespace)
-                self.log.info("Deleted pod: %s in namespace %s", str(key), str(namespace))
+                self.log.info("Deleted pod: %s in namespace %s", key, namespace)
         else:
             self.kube_scheduler.patch_pod_executor_done(pod_name=pod_name, namespace=namespace)
-            self.log.info("Patched pod %s in namespace %s to mark it as done", str(key), str(namespace))
+            self.log.info("Patched pod %s in namespace %s to mark it as done", key, namespace)
 
         try:
             self.running.remove(key)
@@ -480,7 +494,6 @@ class KubernetesExecutor(BaseExecutor):
         messages = []
         log = []
         try:
-
             from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
             from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
 
@@ -614,7 +627,6 @@ class KubernetesExecutor(BaseExecutor):
         from kubernetes.client.rest import ApiException
 
         try:
-
             kube_client.patch_namespaced_pod(
                 name=pod.metadata.name,
                 namespace=pod.metadata.namespace,
@@ -650,7 +662,6 @@ class KubernetesExecutor(BaseExecutor):
             from kubernetes.client.rest import ApiException
 
             try:
-
                 kube_client.patch_namespaced_pod(
                     name=pod.metadata.name,
                     namespace=pod.metadata.namespace,
@@ -666,22 +677,20 @@ class KubernetesExecutor(BaseExecutor):
             assert self.task_queue
 
         self.log.debug("Executor shutting down, task_queue approximate size=%d", self.task_queue.qsize())
-        while True:
-            try:
+        with contextlib.suppress(Empty):
+            while True:
                 task = self.task_queue.get_nowait()
                 # This is a new task to run thus ok to ignore.
                 self.log.warning("Executor shutting down, will NOT run task=%s", task)
                 self.task_queue.task_done()
-            except Empty:
-                break
 
     def _flush_result_queue(self) -> None:
         if TYPE_CHECKING:
             assert self.result_queue
 
         self.log.debug("Executor shutting down, result_queue approximate size=%d", self.result_queue.qsize())
-        while True:
-            try:
+        with contextlib.suppress(Empty):
+            while True:
                 results = self.result_queue.get_nowait()
                 self.log.warning("Executor shutting down, flushing results=%s", results)
                 try:
@@ -700,11 +709,9 @@ class KubernetesExecutor(BaseExecutor):
                         )
                 finally:
                     self.result_queue.task_done()
-            except Empty:
-                break
 
     def end(self) -> None:
-        """Called when the executor shuts down."""
+        """Shut down the executor."""
         if TYPE_CHECKING:
             assert self.task_queue
             assert self.result_queue
@@ -740,7 +747,8 @@ class KubernetesExecutor(BaseExecutor):
 
 
 def _get_parser() -> argparse.ArgumentParser:
-    """This method is used by Sphinx to generate documentation.
+    """
+    Generate documentation; used by Sphinx.
 
     :meta private:
     """

@@ -17,10 +17,11 @@
  under the License.
 -->
 
+<!-- START Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
 # Apache Airflow
 
 [![PyPI version](https://badge.fury.io/py/apache-airflow.svg)](https://badge.fury.io/py/apache-airflow)
-[![GitHub Build](https://github.com/apache/airflow/workflows/CI%20Build/badge.svg)](https://github.com/apache/airflow/actions)
+[![GitHub Build](https://github.com/apache/airflow/workflows/Tests/badge.svg)](https://github.com/apache/airflow/actions)
 [![Coverage Status](https://codecov.io/gh/apache/airflow/graph/badge.svg?token=WdLKlKHOAU)](https://codecov.io/gh/apache/airflow)
 [![License](https://img.shields.io/:license-Apache%202-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0.txt)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/apache-airflow.svg)](https://pypi.org/project/apache-airflow/)
@@ -40,6 +41,7 @@ When workflows are defined as code, they become more maintainable, versionable, 
 
 Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The Airflow scheduler executes your tasks on an array of workers while following the specified dependencies. Rich command line utilities make performing complex surgeries on DAGs a snap. The rich user interface makes it easy to visualize pipelines running in production, monitor progress, and troubleshoot issues when needed.
 
+<!-- END Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of contents**
@@ -59,7 +61,8 @@ Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The 
 - [Approach to dependencies of Airflow](#approach-to-dependencies-of-airflow)
 - [Contributing](#contributing)
 - [Who uses Apache Airflow?](#who-uses-apache-airflow)
-- [Who Maintains Apache Airflow?](#who-maintains-apache-airflow)
+- [Who maintains Apache Airflow?](#who-maintains-apache-airflow)
+- [What goes into the next release?](#what-goes-into-the-next-release)
 - [Can I use the Apache Airflow logo in my presentation?](#can-i-use-the-apache-airflow-logo-in-my-presentation)
 - [Airflow merchandise](#airflow-merchandise)
 - [Links](#links)
@@ -82,21 +85,24 @@ Airflow is not a streaming solution, but it is often used to process real-time d
 - **Elegant**: Airflow pipelines are lean and explicit. Parameterizing your scripts is built into the core of Airflow using the powerful **Jinja** templating engine.
 - **Scalable**: Airflow has a modular architecture and uses a message queue to orchestrate an arbitrary number of workers.
 
+<!-- START Requirements, please keep comment here to allow auto update of PyPI readme.md -->
 ## Requirements
 
 Apache Airflow is tested with:
 
-|             | Main version (dev)           | Stable version (2.7.0)    |
-|-------------|------------------------------|---------------------------|
-| Python      | 3.8, 3.9, 3.10, 3.11         | 3.8, 3.9, 3.10, 3.11      |
-| Platform    | AMD64/ARM64(\*)              | AMD64/ARM64(\*)           |
-| Kubernetes  | 1.24, 1.25, 1.26, 1.27, 1.28 | 1.24, 1.25, 1.26, 1.27    |
-| PostgreSQL  | 11, 12, 13, 14, 15           | 11, 12, 13, 14, 15        |
-| MySQL       | 5.7, 8.0, 8.1                | 5.7, 8.0                  |
-| SQLite      | 3.15.0+                      | 3.15.0+                   |
-| MSSQL       | 2017(\*), 2019(\*)           | 2017(\*), 2019(\*)        |
+|             | Main version (dev)     | Stable version (2.7.1) |
+|-------------|------------------------|------------------------|
+| Python      | 3.8, 3.9, 3.10, 3.11   | 3.8, 3.9, 3.10, 3.11   |
+| Platform    | AMD64/ARM64(\*)        | AMD64/ARM64(\*)        |
+| Kubernetes  | 1.25, 1.26, 1.27, 1.28 | 1.24, 1.25, 1.26, 1.27 |
+| PostgreSQL  | 11, 12, 13, 14, 15, 16 | 11, 12, 13, 14, 15     |
+| MySQL       | 8.0, 8.1               | 5.7, 8.0               |
+| SQLite      | 3.15.0+                | 3.15.0+                |
+| MSSQL       | 2017(\*\*), 2019(\*\*) | 2017(\*\*), 2019(\*\*) |
 
 \* Experimental
+
+\*\* **Discontinued soon**, not recommended for the new installation
 
 **Note**: MySQL 5.x versions are unable to or have limitations with
 running multiple schedulers -- please see the [Scheduler docs](https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/scheduler.html).
@@ -114,6 +120,8 @@ as this is the only environment that is supported. The only distro that is used 
 is used in the [Community managed DockerHub image](https://hub.docker.com/p/apache/airflow) is
 `Debian Bullseye`.
 
+<!-- END Requirements, please keep comment here to allow auto update of PyPI readme.md -->
+<!-- START Getting started, please keep comment here to allow auto update of PyPI readme.md -->
 ## Getting started
 
 Visit the official Airflow website documentation (latest **stable** release) for help with
@@ -128,6 +136,8 @@ the [Airflow Wiki](https://cwiki.apache.org/confluence/display/AIRFLOW/Airflow+I
 
 Documentation for dependent projects like provider packages, Docker image, Helm Chart, you'll find it in [the documentation index](https://airflow.apache.org/docs/).
 
+<!-- END Getting started, please keep comment here to allow auto update of PyPI readme.md -->
+<!-- START Installing from PyPI, please keep comment here to allow auto update of PyPI readme.md -->
 ## Installing from PyPI
 
 We publish Apache Airflow as `apache-airflow` package in PyPI. Installing it however might be sometimes tricky
@@ -163,20 +173,22 @@ them to the appropriate format and workflow that your tool requires.
 
 
 ```bash
-pip install 'apache-airflow==2.7.0' \
- --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.0/constraints-3.8.txt"
+pip install 'apache-airflow==2.7.1' \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.1/constraints-3.8.txt"
 ```
 
 2. Installing with extras (i.e., postgres, google)
 
 ```bash
-pip install 'apache-airflow[postgres,google]==2.7.0' \
- --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.0/constraints-3.8.txt"
+pip install 'apache-airflow[postgres,google]==2.7.1' \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.1/constraints-3.8.txt"
 ```
 
 For information on installing provider packages, check
 [providers](http://airflow.apache.org/docs/apache-airflow-providers/index.html).
 
+<!-- END Installing from PyPI, please keep comment here to allow auto update of PyPI readme.md -->
+<!-- START Official source code, please keep comment here to allow auto update of PyPI readme.md -->
 ## Official source code
 
 Apache Airflow is an [Apache Software Foundation](https://www.apache.org) (ASF) project,
@@ -191,6 +203,7 @@ and our official source code releases:
 Following the ASF rules, the source packages released must be sufficient for a user to build and test the
 release provided they have access to the appropriate platform and tools.
 
+<!-- END Official source code, please keep comment here to allow auto update of PyPI readme.md -->
 ## Convenience packages
 
 There are other ways of installing and using Airflow. Those are "convenience" methods - they are
@@ -280,7 +293,7 @@ Apache Airflow version life cycle:
 
 | Version   | Current Patch/Minor   | State     | First Release   | Limited Support   | EOL/Terminated   |
 |-----------|-----------------------|-----------|-----------------|-------------------|------------------|
-| 2         | 2.7.0                 | Supported | Dec 17, 2020    | TBD               | TBD              |
+| 2         | 2.7.2                 | Supported | Dec 17, 2020    | TBD               | TBD              |
 | 1.10      | 1.10.15               | EOL       | Aug 27, 2018    | Dec 17, 2020      | June 17, 2021    |
 | 1.9       | 1.9.0                 | EOL       | Jan 03, 2018    | Aug 27, 2018      | Aug 27, 2018     |
 | 1.8       | 1.8.2                 | EOL       | Mar 19, 2017    | Jan 03, 2018      | Jan 03, 2018     |
@@ -409,24 +422,78 @@ Those `extras` and `providers` dependencies are maintained in `provider.yaml` of
 By default, we should not upper-bound dependencies for providers, however each provider's maintainer
 might decide to add additional limits (and justify them with comment).
 
+<!-- START Contributing, please keep comment here to allow auto update of PyPI readme.md -->
+
 ## Contributing
 
 Want to help build Apache Airflow? Check out our [contributing documentation](https://github.com/apache/airflow/blob/main/CONTRIBUTING.rst).
 
 Official Docker (container) images for Apache Airflow are described in [IMAGES.rst](https://github.com/apache/airflow/blob/main/IMAGES.rst).
 
+<!-- END Contributing, please keep comment here to allow auto update of PyPI readme.md -->
+<!-- START Who uses Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
+
 ## Who uses Apache Airflow?
 
-More than 400 organizations are using Apache Airflow
+We know about around 500 organizations that are using Apache Airflow (but there are likely many more)
 [in the wild](https://github.com/apache/airflow/blob/main/INTHEWILD.md).
 
-## Who Maintains Apache Airflow?
+If you use Airflow - feel free to make a PR to add your organisation to the list.
+
+<!-- END Who uses Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
+<!-- START Who maintains Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
+
+## Who maintains Apache Airflow?
 
 Airflow is the work of the [community](https://github.com/apache/airflow/graphs/contributors),
 but the [core committers/maintainers](https://people.apache.org/committers-by-project.html#airflow)
 are responsible for reviewing and merging PRs as well as steering conversations around new feature requests.
 If you would like to become a maintainer, please review the Apache Airflow
 [committer requirements](https://github.com/apache/airflow/blob/main/COMMITTERS.rst#guidelines-to-become-an-airflow-committer).
+
+<!-- END Who maintains Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
+
+## What goes into the next release?
+
+Often you will see an issue that is assigned to specific milestone with Airflow version, or PR that gets merged
+to the main branch and you might wonder which release the merged PR will be released in or which release the
+issue will be fixed in. The answer to it is as usual - it depends. The answer is different for PRs and Issues.
+
+To add a bit of context, ee are following the [Semver](https://semver.org/) versioning scheme as described in
+[Airflow release process](https://airflow.apache.org/docs/apache-airflow/stable/release-process.html). More
+details are explained in detail in this README in [Semantic versioning](#semantic-versioning) chapter, but
+in short, we have `MAJOR.MINOR.PATCH` versions of Airflow, where `MAJOR` version is incremented when there
+are breaking changes, `MINOR` version is incremented when there are new features added, and `PATCH` version
+is incremented when there are only bug-fixes and doc-only changes.
+
+Generally we release `MINOR` versions of Airflow from a branch that is named after the MINOR version. For example
+`2.7.*` releases are released from `v2-7-stable` branch, `2.8.*` releases are released from `v2-8-stable`
+branch, etc.
+
+Most of the time in our release cycle, when the branch for next `MINOR` branch is not yet created, all
+PRs merged to `main` (unless they get reverted), will find their way to the next `MINOR` release. For example
+if the last release is `2.7.0` or `2.7.1` and `v2-8-stable` branch is not created yet, the next `MINOR` release
+is `2.8.0` and all PRs merged to main will be released in `2.8.0`. There is a brief period of time when we
+cut a new `MINOR` release branch and prepare alpha, beta, RC candidates for the `2.NEXT_MINOR.0` version
+where PRs merged to main will only be released in the following `MINOR` release.
+
+However, some PRs (bug-fixes and doc-only changes) when merged, can be cherry-picked to current `MINOR` branch
+and released in the next `PATCHLEVEL` release - for example when the last released version from `v2-7-stable`
+branch is `2.7.2`. Some of the PRs from main can be marked as `2.7.3` milestone by committers and attempt by the
+release manager to cherry-pick them is made. If successful, they will be released in `2.7.3`. The final
+decision about cherry-picking is made by the release manager.
+
+Marking issues with a milestone is a bit different. Maintainers do not mark issues with a milestone usually,
+normally they are only marked in PRs. If PR linked to the issue (and "fixing it") gets merged and released
+in a specific version following the process described above, the issue will be automatically closed, no
+milestone will be set for the issue, you need to check the PR that fixed the issue to see which version
+it was released in. However sometimes maintainers mark issues with specific milestone, which means that the
+issue is important to become a candidate to take a look when the release is being prepared. Since this is an
+Open-Source project, where basically all contributors volunteer their time, there is no guarantee that specific
+issue will be fixed in specific version. We do not want to hold the release because some issue is not fixed,
+so in such case release manager will reassign such unfixed issues to the next milestone in case they are not
+fixed in time for the current release. Therefore, the milestone for issue is more of an intent that it should be
+looked at, than promise it will be fixed in the version.
 
 ## Can I use the Apache Airflow logo in my presentation?
 
