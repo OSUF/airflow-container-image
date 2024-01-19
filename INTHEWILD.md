@@ -43,6 +43,7 @@ Currently, **officially** using Airflow:
 1. [Akamai](https://www.akamai.com/) [[@anirudhbagri](https://github.com/anirudhbagri)]
 1. [Akamas](https://akamas.io) [[@GiovanniPaoloGibilisco](https://github.com/GiovanniPaoloGibilisco), [@lucacavazzana](https://github.com/lucacavazzana)]
 1. [Alan](https://alan.eu) [[@charles-go](https://github.com/charles-go)]
+1. [AliFone](https://www.alifone.com.br/)
 1. [allegro.pl](http://allegro.tech/) [[@kretes](https://github.com/kretes)]
 1. [Allo-Media](https://www.allo-media.net) [[@merwan](https://github.com/merwan/)]
 1. [AloPeyk](https://alopeyk.com) [[@blcksrx](https://github.com/blcksrx), [@AloPeyk](https://github.com/AloPeyk)]
@@ -255,6 +256,8 @@ Currently, **officially** using Airflow:
 1. [imgix](https://www.imgix.com/) [[@dclubb](https://github.com/dclubb)]
 1. [Indeed](https://www.indeed.com/) [[@chrismclennon](https://github.com/chrismclennon), [@raj-manvar](https://github.com/raj-manvar), [@Adil-Ibragimov](https://github.com/Adil-Ibragimov)]
 1. [IndiaMART](https://www.indiamart.com) [@sumit-kushwah](https://github.com/sumit-kushwah)]
+1. [Infofarm](https://infofarm.be/) [[@infofarm](https://github.com/infofarm), [@kobethuwis](https://github.com/kobethuwis)]
+1. [Infrabel](https://infrabel.be) [[@Joffreybvn](https://github.com/Joffreybvn), [@dabla](https://github.com/dabla), [@robbydb88](https://github.com/robbydb88), [@jarnedemunter1](https://github.com/jarnedemunter1)]
 1. [ING](http://www.ing.com/)
 1. [Instacart 🥕](http://www.instacart.com/) [[@arp1t](https://github.com/arp1t) & [@code-sauce](https://github.com/code-sauce) & [@jasonlew](https://github.com/jasonlew) & [@j4p3](https://github.com/j4p3) & [@lubert](https://github.com/lubert) & [@mmontagna](https://github.com/mmontagna) & [@RyanAD](https://github.com/RyanAD) &[@zzadeh](https://github.com/zzadeh)]
 1. [Intellischool 🎓](https://intellischool.co/) [[@intelliscl](https://github.com/intelliscl) & [@dave-philp](https://github.com/dave-philp)]
@@ -288,6 +291,7 @@ Currently, **officially** using Airflow:
 1. [LetsBonus](http://www.letsbonus.com) [[@jesusfcr](https://github.com/jesusfcr) & [@OpringaoDoTurno](https://github.com/OpringaoDoTurno)]
 1. [Liberty Global](https://www.libertyglobal.com/) [[@LibertyGlobal](https://github.com/LibertyGlobal/)]
 1. [liligo](http://liligo.com/) [[@tromika](https://github.com/tromika)]
+1. [Lineas](https://lineas.net/) [[@lineashub](https://github.com/lineashub), [@kobethuwis](https://github.com/kobethuwis)]
 1. [LingoChamp](http://www.liulishuo.com/) [[@haitaoyao](https://github.com/haitaoyao)]
 1. [LinkedIn](http://linkedin.com/) [[@csm10495](https://github.com/csm10495)]
 1. [Loadsmart](https://loadsmart.com/) [[@loadsmart](https://github.com/loadsmart)]
@@ -390,6 +394,7 @@ Currently, **officially** using Airflow:
 1. [Raízen](https://www.raizen.com.br/) [[@rudlac](https://github.com/rudlac) & [@guifneves](https://github.com/guifneves)]
 1. [REA Group](https://www.rea-group.com/)
 1. [Reddit](https://www.reddit.com/) [[@reddit](https://github.com/reddit/)]
+1. [Restb.ai](https://restb.ai/) [[@ferrannoguera](https://github.com/ferrannoguera)]
 1. [Retailink](https://retailink.fr/) [[@Harisonm](https://github.com/Harisonm)]
 1. [ReUp Education](https://reupeducation.com/) [[@Reup-Education](https://github.com/Reup-Education)]
 1. [Reverb](https://reverb.com)[[@reverbdotcom](https://github.com/reverbdotcom)]
@@ -458,6 +463,7 @@ Currently, **officially** using Airflow:
 1. [Tink](https://tink.com/) [[@tink-ab](https://github.com/tink-ab)]
 1. [TokenAnalyst](https://github.com/tokenanalyst) [[@simonohanlon101](https://github.com/simonohanlon101), [@ankitchiplunkar](https://github.com/ankitchiplunkar), [@sidshekhar](https://github.com/sidshekhar), [@sp6pe](https://github.com/sp6pe)]
 1. [Tokopedia](https://www.tokopedia.com/) [[@topedmaria](https://github.com/topedmaria)]
+1. [Topgolf](https://topgolf.com/)[[@BhaveshSK](https://github.com/BhaveshSK)]
 1. [Trade Republic](https://traderepublic.com/)
 1. [Trakken](https://www.trkkn.com/) [[@itroulli](https://github.com/itroulli), [@gthar](https://github.com/gthar), [@qulo](https://github.com/qulo), [@Oscar-Rod](https://github.com/Oscar-Rod), [@kondla](https://github.com/kondla), [@semuar](https://github.com/semuar), [@ManuelFreytag](https://github.com/ManuelFreytag)
 1. [Travix](https://www.travix.com/)

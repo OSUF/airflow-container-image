@@ -63,6 +63,7 @@ from airflow.utils import timezone
 
 if TYPE_CHECKING:
     from google.api_core import operation
+    from google.api_core.retry_async import AsyncRetry
     from google.protobuf.duration_pb2 import Duration
     from google.protobuf.field_mask_pb2 import FieldMask
 
@@ -511,9 +512,7 @@ class DataprocCreateClusterOperator(GoogleCloudBaseOperator):
     The operator will wait until the creation is successful or an error occurs
     in the creation process.
 
-    If the cluster already exists and ``use_if_exists`` is True, the operator will:
-
-    If the cluster already exists and ``use_if_exists`` is True then the operator will:
+    If the cluster already exists and ``use_if_exists`` is True, then the operator will:
     - if cluster state is ERROR then delete it if specified and raise error
     - if cluster state is CREATING wait for it and then check for ERROR state
     - if cluster state is DELETING wait for it and then create new cluster
@@ -592,7 +591,7 @@ class DataprocCreateClusterOperator(GoogleCloudBaseOperator):
         request_id: str | None = None,
         delete_on_error: bool = True,
         use_if_exists: bool = True,
-        retry: Retry | _MethodDefault = DEFAULT,
+        retry: AsyncRetry | _MethodDefault = DEFAULT,
         timeout: float = 1 * 60 * 60,
         metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
@@ -609,7 +608,7 @@ class DataprocCreateClusterOperator(GoogleCloudBaseOperator):
                 "You can use `airflow.dataproc.ClusterGenerator.generate_cluster` "
                 "method to obtain cluster object.",
                 AirflowProviderDeprecationWarning,
-                stacklevel=1,
+                stacklevel=2,
             )
             # Remove result of apply defaults
             if "params" in kwargs:
@@ -879,7 +878,7 @@ class DataprocScaleClusterOperator(GoogleCloudBaseOperator):
             f"The `{type(self).__name__}` operator is deprecated, "
             "please use `DataprocUpdateClusterOperator` instead.",
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
     def _build_scale_cluster_data(self) -> dict:
@@ -985,7 +984,7 @@ class DataprocDeleteClusterOperator(GoogleCloudBaseOperator):
         project_id: str | None = None,
         cluster_uuid: str | None = None,
         request_id: str | None = None,
-        retry: Retry | _MethodDefault = DEFAULT,
+        retry: AsyncRetry | _MethodDefault = DEFAULT,
         timeout: float = 1 * 60 * 60,
         metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
@@ -1298,6 +1297,12 @@ class DataprocSubmitPigJobOperator(DataprocJobBaseOperator):
         query: str | None = None,
         query_uri: str | None = None,
         variables: dict | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1306,10 +1311,18 @@ class DataprocSubmitPigJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.query = query
         self.query_uri = query_uri
         self.variables = variables
@@ -1376,6 +1389,12 @@ class DataprocSubmitHiveJobOperator(DataprocJobBaseOperator):
         query: str | None = None,
         query_uri: str | None = None,
         variables: dict | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1384,10 +1403,18 @@ class DataprocSubmitHiveJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.query = query
         self.query_uri = query_uri
         self.variables = variables
@@ -1455,6 +1482,12 @@ class DataprocSubmitSparkSqlJobOperator(DataprocJobBaseOperator):
         query: str | None = None,
         query_uri: str | None = None,
         variables: dict | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1463,10 +1496,18 @@ class DataprocSubmitSparkSqlJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.query = query
         self.query_uri = query_uri
         self.variables = variables
@@ -1536,6 +1577,12 @@ class DataprocSubmitSparkJobOperator(DataprocJobBaseOperator):
         arguments: list | None = None,
         archives: list | None = None,
         files: list | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1544,10 +1591,18 @@ class DataprocSubmitSparkJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.main_jar = main_jar
         self.main_class = main_class
         self.arguments = arguments
@@ -1613,6 +1668,12 @@ class DataprocSubmitHadoopJobOperator(DataprocJobBaseOperator):
         arguments: list | None = None,
         archives: list | None = None,
         files: list | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1621,10 +1682,18 @@ class DataprocSubmitHadoopJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.main_jar = main_jar
         self.main_class = main_class
         self.arguments = arguments
@@ -1713,6 +1782,12 @@ class DataprocSubmitPySparkJobOperator(DataprocJobBaseOperator):
         archives: list | None = None,
         pyfiles: list | None = None,
         files: list | None = None,
+        impersonation_chain: str | Sequence[str] | None = None,
+        region: str,
+        job_name: str = "{{task.task_id}}_{{ds_nodash}}",
+        cluster_name: str = "cluster-1",
+        dataproc_properties: dict | None = None,
+        dataproc_jars: list[str] | None = None,
         **kwargs,
     ) -> None:
         # TODO: Remove one day
@@ -1721,10 +1796,18 @@ class DataprocSubmitPySparkJobOperator(DataprocJobBaseOperator):
             " `generate_job` method of `{cls}` to generate dictionary representing your job"
             " and use it with the new operator.".format(cls=type(self).__name__),
             AirflowProviderDeprecationWarning,
-            stacklevel=1,
+            stacklevel=2,
         )
 
-        super().__init__(**kwargs)
+        super().__init__(
+            impersonation_chain=impersonation_chain,
+            region=region,
+            job_name=job_name,
+            cluster_name=cluster_name,
+            dataproc_properties=dataproc_properties,
+            dataproc_jars=dataproc_jars,
+            **kwargs,
+        )
         self.main = main
         self.arguments = arguments
         self.archives = archives
@@ -1891,7 +1974,7 @@ class DataprocInstantiateWorkflowTemplateOperator(GoogleCloudBaseOperator):
         version: int | None = None,
         request_id: str | None = None,
         parameters: dict[str, str] | None = None,
-        retry: Retry | _MethodDefault = DEFAULT,
+        retry: AsyncRetry | _MethodDefault = DEFAULT,
         timeout: float | None = None,
         metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
@@ -2152,7 +2235,7 @@ class DataprocSubmitJobOperator(GoogleCloudBaseOperator):
         Service Account Token Creator IAM role to the directly preceding identity, with first
         account from the list granting this role to the originating account (templated).
     :param asynchronous: Flag to return after submitting the job to the Dataproc API.
-        This is useful for submitting long running jobs and
+        This is useful for submitting long-running jobs and
         waiting on them asynchronously using the DataprocJobSensor
     :param deferrable: Run operator in the deferrable mode
     :param polling_interval_seconds: time in seconds between polling for job completion.
@@ -2267,10 +2350,11 @@ class DataprocSubmitJobOperator(GoogleCloudBaseOperator):
         """
         job_state = event["job_state"]
         job_id = event["job_id"]
+        job = event["job"]
         if job_state == JobStatus.State.ERROR:
-            raise AirflowException(f"Job failed:\n{job_id}")
+            raise AirflowException(f"Job {job_id} failed:\n{job}")
         if job_state == JobStatus.State.CANCELLED:
-            raise AirflowException(f"Job was cancelled:\n{job_id}")
+            raise AirflowException(f"Job {job_id} was cancelled:\n{job}")
         self.log.info("%s completed successfully.", self.task_id)
         return job_id
 
@@ -2340,7 +2424,7 @@ class DataprocUpdateClusterOperator(GoogleCloudBaseOperator):
         region: str,
         request_id: str | None = None,
         project_id: str | None = None,
-        retry: Retry | _MethodDefault = DEFAULT,
+        retry: AsyncRetry | _MethodDefault = DEFAULT,
         timeout: float | None = None,
         metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
@@ -2480,7 +2564,7 @@ class DataprocCreateBatchOperator(GoogleCloudBaseOperator):
         metadata: Sequence[tuple[str, str]] = (),
         gcp_conn_id: str = "google_cloud_default",
         impersonation_chain: str | Sequence[str] | None = None,
-        result_retry: Retry | _MethodDefault = DEFAULT,
+        result_retry: AsyncRetry | _MethodDefault = DEFAULT,
         asynchronous: bool = False,
         deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         polling_interval_seconds: int = 5,
