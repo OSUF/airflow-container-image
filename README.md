@@ -67,6 +67,7 @@ Use Airflow to author workflows as directed acyclic graphs (DAGs) of tasks. The 
 - [Base OS support for reference Airflow images](#base-os-support-for-reference-airflow-images)
 - [Approach to dependencies of Airflow](#approach-to-dependencies-of-airflow)
 - [Contributing](#contributing)
+- [Voting Policy](#voting-policy)
 - [Who uses Apache Airflow?](#who-uses-apache-airflow)
 - [Who maintains Apache Airflow?](#who-maintains-apache-airflow)
 - [What goes into the next release?](#what-goes-into-the-next-release)
@@ -97,14 +98,14 @@ Airflow is not a streaming solution, but it is often used to process real-time d
 
 Apache Airflow is tested with:
 
-|             | Main version (dev)           | Stable version (2.8.0)       |
-|-------------|------------------------------|------------------------------|
-| Python      | 3.8, 3.9, 3.10, 3.11         | 3.8, 3.9, 3.10, 3.11         |
-| Platform    | AMD64/ARM64(\*)              | AMD64/ARM64(\*)              |
-| Kubernetes  | 1.25, 1.26, 1.27, 1.28, 1.29 | 1.25, 1.26, 1.27, 1.28       |
-| PostgreSQL  | 12, 13, 14, 15, 16           | 12, 13, 14, 15, 16           |
-| MySQL       | 8.0, Innovation              | 8.0, Innovation              |
-| SQLite      | 3.15.0+                      | 3.15.0+                      |
+|             | Main version (dev)           | Stable version (2.8.2) |
+|-------------|------------------------------|------------------------|
+| Python      | 3.8, 3.9, 3.10, 3.11         | 3.8, 3.9, 3.10, 3.11   |
+| Platform    | AMD64/ARM64(\*)              | AMD64/ARM64(\*)        |
+| Kubernetes  | 1.25, 1.26, 1.27, 1.28, 1.29 | 1.25, 1.26, 1.27, 1.28 |
+| PostgreSQL  | 12, 13, 14, 15, 16           | 12, 13, 14, 15, 16     |
+| MySQL       | 8.0, Innovation              | 8.0, Innovation        |
+| SQLite      | 3.15.0+                      | 3.15.0+                |
 
 \* Experimental
 
@@ -179,15 +180,15 @@ them to the appropriate format and workflow that your tool requires.
 
 
 ```bash
-pip install 'apache-airflow==2.8.0' \
- --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.0/constraints-3.8.txt"
+pip install 'apache-airflow==2.8.2' \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.2/constraints-3.8.txt"
 ```
 
 2. Installing with extras (i.e., postgres, google)
 
 ```bash
-pip install 'apache-airflow[postgres,google]==2.8.0' \
- --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.0/constraints-3.8.txt"
+pip install 'apache-airflow[postgres,google]==2.8.2' \
+ --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.2/constraints-3.8.txt"
 ```
 
 For information on installing provider packages, check
@@ -223,7 +224,7 @@ Those are - in the order of most common ways people install Airflow:
   `docker` tool, use them in Kubernetes, Helm Charts, `docker-compose`, `docker swarm`, etc. You can
   read more about using, customising, and extending the images in the
   [Latest docs](https://airflow.apache.org/docs/docker-stack/index.html), and
-  learn details on the internals in the [IMAGES.rst](https://github.com/apache/airflow/blob/main/IMAGES.rst) document.
+  learn details on the internals in the [images](https://airflow.apache.org/docs/docker-stack/index.html) document.
 - [Tags in GitHub](https://github.com/apache/airflow/tags) to retrieve the git project sources that
   were used to generate official source packages via git
 
@@ -292,7 +293,7 @@ Apache Airflow version life cycle:
 
 | Version   | Current Patch/Minor   | State     | First Release   | Limited Support   | EOL/Terminated   |
 |-----------|-----------------------|-----------|-----------------|-------------------|------------------|
-| 2         | 2.8.0                 | Supported | Dec 17, 2020    | TBD               | TBD              |
+| 2         | 2.8.2                 | Supported | Dec 17, 2020    | TBD               | TBD              |
 | 1.10      | 1.10.15               | EOL       | Aug 27, 2018    | Dec 17, 2020      | June 17, 2021    |
 | 1.9       | 1.9.0                 | EOL       | Jan 03, 2018    | Aug 27, 2018      | Aug 27, 2018     |
 | 1.8       | 1.8.2                 | EOL       | Mar 19, 2017    | Jan 03, 2018      | Jan 03, 2018     |
@@ -426,12 +427,17 @@ might decide to add additional limits (and justify them with comment).
 
 ## Contributing
 
-Want to help build Apache Airflow? Check out our [contributing documentation](https://github.com/apache/airflow/blob/main/CONTRIBUTING.rst).
+Want to help build Apache Airflow? Check out our [contributing documentation](https://github.com/apache/airflow/blob/main/contributing-docs/README.rst).
 
-Official Docker (container) images for Apache Airflow are described in [IMAGES.rst](https://github.com/apache/airflow/blob/main/IMAGES.rst).
+Official Docker (container) images for Apache Airflow are described in [images](dev/breeze/doc/ci/02_images.md).
 
 <!-- END Contributing, please keep comment here to allow auto update of PyPI readme.md -->
 <!-- START Who uses Apache Airflow, please keep comment here to allow auto update of PyPI readme.md -->
+
+## Voting Policy
+
+* Commits need a +1 vote from a committer who is not the author
+* When we do AIP voting, both PMC member's and committer's `+1s` are considered a binding vote.
 
 ## Who uses Apache Airflow?
 

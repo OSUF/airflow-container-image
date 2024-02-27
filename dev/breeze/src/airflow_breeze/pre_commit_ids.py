@@ -119,6 +119,8 @@ PRE_COMMIT_LIST = [
     "update-black-version",
     "update-breeze-cmd-output",
     "update-breeze-readme-config-hash",
+    "update-build-dependencies",
+    "update-chart-dependencies",
     "update-common-sql-api-stubs",
     "update-er-diagram",
     "update-extras",
@@ -133,5 +135,6 @@ PRE_COMMIT_LIST = [
     "update-supported-versions",
     "update-vendored-in-k8s-json-schema",
     "update-version",
+    "validate-operators-init",
     "yamllint",
 ]
