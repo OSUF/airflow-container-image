@@ -50,7 +50,7 @@ import type { TaskState } from "src/types";
 
 import type { DAG, DAGDetail } from "src/types/api-generated";
 import URLSearchParamsWrapper from "src/utils/URLSearchParamWrapper";
-import { SimpleStatus } from "../StatusBox";
+import { SimpleStatus } from "../../StatusBox";
 
 const dagId = getMetaValue("dag_id");
 const tagIndexUrl = getMetaValue("tag_index_url");
@@ -242,6 +242,22 @@ const Dag = () => {
                 </Td>
                 <Td />
               </Tr>
+              {!!dagDetailsData.datasetExpression && (
+                <Tr>
+                  <Td>Dataset Conditions</Td>
+                  <Td>
+                    <Code>
+                      <pre>
+                        {JSON.stringify(
+                          dagDetailsData.datasetExpression,
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </Code>
+                  </Td>
+                </Tr>
+              )}
               {renderDagDetailsData(dagDetailsData, dagDataExcludeFields)}
               <Tr>
                 <Td>Owners</Td>

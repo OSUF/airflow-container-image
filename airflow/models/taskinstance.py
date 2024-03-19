@@ -206,6 +206,7 @@ def _stop_remaining_tasks(*, task_instance: TaskInstance | TaskInstancePydantic,
         raise ValueError("``task_instance`` must have ``dag_run`` set")
     tis = task_instance.dag_run.get_task_instances(session=session)
     if TYPE_CHECKING:
+        assert task_instance.task
         assert isinstance(task_instance.task.dag, DAG)
 
     for ti in tis:
@@ -268,6 +269,8 @@ def clear_task_instances(
             if ti_dag and ti_dag.has_task(task_id):
                 task = ti_dag.get_task(task_id)
                 ti.refresh_from_task(task)
+                if TYPE_CHECKING:
+                    assert ti.task
                 task_retries = task.retries
                 ti.max_tries = ti.try_number + task_retries - 1
             else:
@@ -396,6 +399,9 @@ def _execute_task(task_instance: TaskInstance | TaskInstancePydantic, context: C
     """
     task_to_execute = task_instance.task
 
+    if TYPE_CHECKING:
+        assert task_to_execute
+
     if isinstance(task_to_execute, MappedOperator):
         raise AirflowException("MappedOperator cannot be executed.")
 
@@ -414,6 +420,9 @@ def _execute_task(task_instance: TaskInstance | TaskInstancePydantic, context: C
 
     def _execute_callable(context, **execute_callable_kwargs):
         try:
+            # Print a marker for log grouping of details before task execution
+            log.info("::endgroup::")
+
             return execute_callable(context=context, **execute_callable_kwargs)
         except SystemExit as e:
             # Handle only successful cases here. Failure cases will be handled upper
@@ -421,6 +430,9 @@ def _execute_task(task_instance: TaskInstance | TaskInstancePydantic, context: C
             if e.code is not None and e.code != 0:
                 raise
             return None
+        finally:
+            # Print a marker post execution for internals of post task processing
+            log.info("::group::Post task execution logs")
 
     # If a timeout is specified for the task, make it fail
     # if it goes beyond
@@ -595,6 +607,7 @@ def _get_template_context(
 
     task = task_instance.task
     if TYPE_CHECKING:
+        assert task
         assert task.dag
     dag: DAG = task.dag
 
@@ -808,6 +821,9 @@ def _is_eligible_to_retry(*, task_instance: TaskInstance | TaskInstancePydantic)
         # Couldn't load the task, don't know number of retries, guess:
         return task_instance.try_number <= task_instance.max_tries
 
+    if TYPE_CHECKING:
+        assert task_instance.task
+
     return task_instance.task.retries and task_instance.try_number <= task_instance.max_tries
 
 
@@ -911,7 +927,11 @@ def _refresh_from_task(
     task_instance.queue = task.queue
     task_instance.pool = pool_override or task.pool
     task_instance.pool_slots = task.pool_slots
-    task_instance.priority_weight = task.priority_weight_total
+    with contextlib.suppress(Exception):
+        # This method is called from the different places, and sometimes the TI is not fully initialized
+        task_instance.priority_weight = task_instance.task.weight_rule.get_weight(
+            task_instance  # type: ignore[arg-type]
+        )
     task_instance.run_as_user = task.run_as_user
     # Do not set max_tries to task.retries here because max_tries is a cumulative
     # value that needs to be stored in the db.
@@ -967,6 +987,9 @@ def _get_previous_dagrun(
 
     :meta private:
     """
+    if TYPE_CHECKING:
+        assert task_instance.task
+
     dag = task_instance.task.dag
     if dag is None:
         return None
@@ -1025,7 +1048,8 @@ def _email_alert(
     :meta private:
     """
     subject, html_content, html_content_err = task_instance.get_email_subject_content(exception, task=task)
-    assert task.email
+    if TYPE_CHECKING:
+        assert task.email
     try:
         send_email(task.email, subject, html_content)
     except Exception:
@@ -1093,6 +1117,9 @@ def _get_email_subject_content(
         html_content_err = jinja_env.from_string(default_html_content_err).render(**default_context)
 
     else:
+        if TYPE_CHECKING:
+            assert task_instance.task
+
         # Use the DAG's get_template_env() to set force_sandboxed. Don't add
         # the flag to the function on task object -- that function can be
         # overridden, and adding a flag breaks backward compatibility.
@@ -1165,8 +1192,9 @@ def _log_state(*, task_instance: TaskInstance | TaskInstancePydantic, lead_msg: 
     if task_instance.map_index >= 0:
         params.append(task_instance.map_index)
         message += "map_index=%d, "
+    message += "execution_date=%s, start_date=%s, end_date=%s"
     log.info(
-        message + "execution_date=%s, start_date=%s, end_date=%s",
+        message,
         *params,
         _date_or_empty(task_instance=task_instance, attr="execution_date"),
         _date_or_empty(task_instance=task_instance, attr="start_date"),
@@ -1253,7 +1281,7 @@ class TaskInstance(Base, LoggingMixin):
     pid = Column(Integer)
     executor_config = Column(ExecutorConfigType(pickler=dill))
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow)
-    rendered_map_index = Column(String(64))
+    rendered_map_index = Column(String(250))
 
     external_executor_id = Column(StringID())
 
@@ -1326,13 +1354,16 @@ class TaskInstance(Base, LoggingMixin):
         cascade="all, delete, delete-orphan",
     )
     note = association_proxy("task_instance_note", "content", creator=_creator_note)
-    task: Operator  # Not always set...
+    task: Operator | None = None
     test_mode: bool = False
     is_trigger_log_context: bool = False
+    run_as_user: str | None = None
+    raw: bool | None = None
     """Indicate to FileTaskHandler that logging context should be set up for trigger logging.
 
     :meta private:
     """
+    _logger_name = "airflow.task"
 
     def __init__(
         self,
@@ -1347,6 +1378,9 @@ class TaskInstance(Base, LoggingMixin):
         self.task_id = task.task_id
         self.map_index = map_index
         self.refresh_from_task(task)
+        if TYPE_CHECKING:
+            assert self.task
+
         # init_on_load will config the log
         self.init_on_load()
 
@@ -1412,6 +1446,10 @@ class TaskInstance(Base, LoggingMixin):
 
         :meta private:
         """
+        priority_weight = task.weight_rule.get_weight(
+            TaskInstance(task=task, run_id=run_id, map_index=map_index)
+        )
+
         return {
             "dag_id": task.dag_id,
             "task_id": task.task_id,
@@ -1422,7 +1460,7 @@ class TaskInstance(Base, LoggingMixin):
             "queue": task.queue,
             "pool": task.pool,
             "pool_slots": task.pool_slots,
-            "priority_weight": task.priority_weight_total,
+            "priority_weight": priority_weight,
             "run_as_user": task.run_as_user,
             "max_tries": task.retries,
             "executor_config": task.executor_config,
@@ -1434,8 +1472,6 @@ class TaskInstance(Base, LoggingMixin):
     @reconstructor
     def init_on_load(self) -> None:
         """Initialize the attributes that aren't stored in the DB."""
-        # correctly config the ti log
-        self._log = logging.getLogger("airflow.task")
         self.test_mode = False  # can be changed when calling 'run'
 
     @hybrid_property
@@ -1479,7 +1515,6 @@ class TaskInstance(Base, LoggingMixin):
         Expose this for the Task Tries and Gantt graph views.
         Using `try_number` throws off the counts for non-running tasks.
         Also useful in error logging contexts to get the try number for the last try that was attempted.
-        https://issues.apache.org/jira/browse/AIRFLOW-2143
         """
         return self._try_number
 
@@ -1510,7 +1545,9 @@ class TaskInstance(Base, LoggingMixin):
     ) -> list[str]:
         dag: DAG | DagModel | DagModelPydantic | None
         # Use the dag if we have it, else fallback to the ORM dag_model, which might not be loaded
-        if hasattr(ti, "task") and hasattr(ti.task, "dag") and ti.task.dag is not None:
+        if hasattr(ti, "task") and getattr(ti.task, "dag", None) is not None:
+            if TYPE_CHECKING:
+                assert ti.task
             dag = ti.task.dag
         else:
             dag = ti.dag_model
@@ -1844,6 +1881,8 @@ class TaskInstance(Base, LoggingMixin):
         :param session: SQLAlchemy ORM Session
         """
         task = self.task
+        if TYPE_CHECKING:
+            assert task
 
         if not task.downstream_task_ids:
             return True
@@ -2000,6 +2039,9 @@ class TaskInstance(Base, LoggingMixin):
     @provide_session
     def get_failed_dep_statuses(self, dep_context: DepContext | None = None, session: Session = NEW_SESSION):
         """Get failed Dependencies."""
+        if TYPE_CHECKING:
+            assert self.task
+
         dep_context = dep_context or DepContext()
         for dep in dep_context.deps | self.task.deps:
             for dep_status in dep.get_dep_statuses(self, session, dep_context):
@@ -2076,14 +2118,19 @@ class TaskInstance(Base, LoggingMixin):
         """
         info = inspect(self)
         if info.attrs.dag_run.loaded_value is not NO_VALUE:
-            if hasattr(self, "task"):
+            if getattr(self, "task", None) is not None:
+                if TYPE_CHECKING:
+                    assert self.task
                 self.dag_run.dag = self.task.dag
             return self.dag_run
 
         from airflow.models.dagrun import DagRun  # Avoid circular import
 
         dr = session.query(DagRun).filter(DagRun.dag_id == self.dag_id, DagRun.run_id == self.run_id).one()
-        if hasattr(self, "task"):
+        if getattr(self, "task", None) is not None:
+            if TYPE_CHECKING:
+                assert self.task
+
             dr.dag = self.task.dag
         # Record it in the instance for next time. This means that `self.execution_date` will work correctly
         set_committed_value(self, "dag_run", dr)
@@ -2131,6 +2178,9 @@ class TaskInstance(Base, LoggingMixin):
         :param session: SQLAlchemy ORM Session
         :return: whether the state was changed to running or not
         """
+        if TYPE_CHECKING:
+            assert task_instance.task
+
         if isinstance(task_instance, TaskInstance):
             ti: TaskInstance = task_instance
         else:  # isinstance(task_instance,TaskInstancePydantic)
@@ -2216,7 +2266,10 @@ class TaskInstance(Base, LoggingMixin):
 
         ti.state = TaskInstanceState.RUNNING
         ti.emit_state_change_metric(TaskInstanceState.RUNNING)
-        ti.external_executor_id = external_executor_id
+
+        if external_executor_id:
+            ti.external_executor_id = external_executor_id
+
         ti.end_date = None
         if not test_mode:
             session.merge(ti).task = task
@@ -2340,9 +2393,13 @@ class TaskInstance(Base, LoggingMixin):
         :param pool: specifies the pool to use to run the task instance
         :param session: SQLAlchemy ORM Session
         """
+        if TYPE_CHECKING:
+            assert self.task
+
         self.test_mode = test_mode
         self.refresh_from_task(self.task, pool_override=pool)
         self.refresh_from_db(session=session)
+
         self.job_id = job_id
         self.hostname = get_hostname()
         self.pid = os.getpid()
@@ -2471,6 +2528,9 @@ class TaskInstance(Base, LoggingMixin):
             return None
 
     def _register_dataset_changes(self, *, session: Session) -> None:
+        if TYPE_CHECKING:
+            assert self.task
+
         for obj in self.task.outlets or []:
             self.log.debug("outlet obj %s", obj)
             # Lineage can have other types of objects besides datasets
@@ -2484,6 +2544,9 @@ class TaskInstance(Base, LoggingMixin):
     def _execute_task_with_callbacks(self, context: Context, test_mode: bool = False, *, session: Session):
         """Prepare Task for Execution."""
         from airflow.models.renderedtifields import RenderedTaskInstanceFields
+
+        if TYPE_CHECKING:
+            assert self.task
 
         parent_pid = os.getpid()
 
@@ -2586,6 +2649,9 @@ class TaskInstance(Base, LoggingMixin):
         """
         from airflow.models.trigger import Trigger
 
+        if TYPE_CHECKING:
+            assert self.task
+
         # First, make the trigger entry
         trigger_row = Trigger.from_object(defer.trigger)
         session.add(trigger_row)
@@ -2672,6 +2738,9 @@ class TaskInstance(Base, LoggingMixin):
 
     def dry_run(self) -> None:
         """Only Renders Templates for the TI."""
+        if TYPE_CHECKING:
+            assert self.task
+
         self.task = self.task.prepare_for_execution()
         self.render_templates()
         if TYPE_CHECKING:
@@ -2693,6 +2762,9 @@ class TaskInstance(Base, LoggingMixin):
         from airflow.models.dagrun import DagRun  # Avoid circular import
 
         self.refresh_from_db(session)
+
+        if TYPE_CHECKING:
+            assert self.task
 
         self.end_date = timezone.utcnow()
         self.set_duration()
@@ -2815,6 +2887,8 @@ class TaskInstance(Base, LoggingMixin):
         task: BaseOperator | None = None
         try:
             if getattr(ti, "task", None) and context:
+                if TYPE_CHECKING:
+                    assert ti.task
                 task = ti.task.unmap((context, session))
         except Exception:
             cls.logger().error("Unable to unmap task to determine if we need to send an alert email")
@@ -2906,6 +2980,9 @@ class TaskInstance(Base, LoggingMixin):
         """
         from airflow.models.renderedtifields import RenderedTaskInstanceFields
 
+        if TYPE_CHECKING:
+            assert self.task
+
         rendered_task_instance_fields = RenderedTaskInstanceFields.get_templated_fields(self, session=session)
         if rendered_task_instance_fields:
             self.task = self.task.unmap(None)
@@ -2947,6 +3024,9 @@ class TaskInstance(Base, LoggingMixin):
         if not context:
             context = self.get_template_context()
         original_task = self.task
+
+        if TYPE_CHECKING:
+            assert original_task
 
         # If self.task is mapped, this call replaces self.task to point to the
         # unmapped BaseOperator created by this function! This is because the
@@ -3319,6 +3399,7 @@ class TaskInstance(Base, LoggingMixin):
 
             task = ti.task
             if TYPE_CHECKING:
+                assert task
                 assert task.dag
 
             # Get a partial DAG with just the specific tasks we want to examine.
@@ -3350,7 +3431,7 @@ class TaskInstance(Base, LoggingMixin):
                 )
             ]
             for schedulable_ti in schedulable_tis:
-                if not hasattr(schedulable_ti, "task"):
+                if getattr(schedulable_ti, "task", None) is None:
                     schedulable_ti.task = task.dag.get_task(schedulable_ti.task_id)
 
             num = dag_run.schedule_tis(schedulable_tis, session=session, max_tis_per_query=max_tis_per_query)
@@ -3425,6 +3506,9 @@ class TaskInstance(Base, LoggingMixin):
         :return: Specific map index or map indexes to pull, or ``None`` if we
             want to "whole" return value (i.e. no mapped task groups involved).
         """
+        if TYPE_CHECKING:
+            assert self.task
+
         # This value should never be None since we already know the current task
         # is in a mapped task group, and should have been expanded, despite that,
         # we need to check that it is not None to satisfy Mypy.
