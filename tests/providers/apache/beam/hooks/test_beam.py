@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import re
 import subprocess
@@ -70,7 +71,7 @@ INFO: To cancel the job using the 'gcloud' tool, run:
 """
 
 try:
-    APACHE_BEAM_VERSION = importlib_version("apache-beam")
+    APACHE_BEAM_VERSION: str | None = importlib_version("apache-beam")
 except ImportError:
     APACHE_BEAM_VERSION = None
 
@@ -385,34 +386,54 @@ class TestBeamHook:
 
 
 class TestBeamRunner:
+    @pytest.mark.db_test
     @mock.patch("subprocess.Popen")
     @mock.patch("select.select")
-    def test_beam_wait_for_done_logging(self, mock_select, mock_popen):
-        cmd = ["test", "cmd"]
-        mock_logging = MagicMock()
-        mock_logging.info = MagicMock()
-        mock_logging.warning = MagicMock()
-        mock_proc = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.stderr.readlines = MagicMock(return_value=["test\n", "error\n"])
-        mock_stderr_fd = MagicMock()
-        mock_proc.stderr.fileno = MagicMock(return_value=mock_stderr_fd)
-        mock_proc_poll = MagicMock()
-        mock_select.return_value = [[mock_stderr_fd]]
+    def test_beam_wait_for_done_logging(self, mock_select, mock_popen, caplog):
+        logger_name = "fake-beam-wait-for-done-logger"
+        fake_logger = logging.getLogger(logger_name)
 
-        def poll_resp_error():
-            mock_proc.return_code = 1
-            return True
+        cmd = ["fake", "cmd"]
+        mock_proc = MagicMock(name="FakeProc")
+        fake_stderr_fd = MagicMock(name="FakeStderr")
+        fake_stdout_fd = MagicMock(name="FakeStdout")
 
-        mock_proc_poll.side_effect = [None, poll_resp_error]
-        mock_proc.poll = mock_proc_poll
+        mock_proc.stderr = fake_stderr_fd
+        mock_proc.stdout = fake_stdout_fd
+        fake_stderr_fd.readline.side_effect = [
+            b"apache-beam-stderr-1",
+            b"apache-beam-stderr-2",
+            StopIteration,
+            b"apache-beam-stderr-3",
+            StopIteration,
+            b"apache-beam-other-stderr",
+        ]
+        fake_stdout_fd.readline.side_effect = [b"apache-beam-stdout", StopIteration]
+        mock_select.side_effect = [
+            ([fake_stderr_fd], None, None),
+            (None, None, None),
+            ([fake_stderr_fd], None, None),
+        ]
+        mock_proc.poll.side_effect = [None, True]
+        mock_proc.returncode = 1
         mock_popen.return_value = mock_proc
-        with pytest.raises(Exception):
-            run_beam_command(cmd, None, None, mock_logging)
-            mock_logging.info.assert_called_once_with("Running command: %s", " ".join(cmd))
-            mock_popen.assert_called_once_with(
-                cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd=None
-            )
+
+        caplog.clear()
+        with pytest.raises(AirflowException, match="Apache Beam process failed with return code 1"):
+            run_beam_command(cmd, fake_logger)
+
+        mock_popen.assert_called_once_with(
+            cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True, cwd=None
+        )
+        info_messages = [rt[2] for rt in caplog.record_tuples if rt[0] == logger_name and rt[1] == 20]
+        assert "Running command: fake cmd" in info_messages
+        assert "apache-beam-stdout" in info_messages
+
+        warn_messages = [rt[2] for rt in caplog.record_tuples if rt[0] == logger_name and rt[1] == 30]
+        assert "apache-beam-stderr-1" in warn_messages
+        assert "apache-beam-stderr-2" in warn_messages
+        assert "apache-beam-stderr-3" in warn_messages
+        assert "apache-beam-other-stderr" in warn_messages
 
 
 class TestBeamOptionsToArgs:

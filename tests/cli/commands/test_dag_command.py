@@ -17,6 +17,7 @@
 # under the License.
 from __future__ import annotations
 
+import argparse
 import contextlib
 import json
 import os
@@ -34,7 +35,7 @@ from airflow.api_connexion.schemas.dag_schema import DAGSchema, dag_schema
 from airflow.cli import cli_parser
 from airflow.cli.commands import dag_command
 from airflow.decorators import task
-from airflow.exceptions import AirflowException
+from airflow.exceptions import AirflowException, RemovedInAirflow3Warning
 from airflow.models import DagBag, DagModel, DagRun
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.dag import _run_inline_trigger
@@ -61,6 +62,8 @@ pytestmark = pytest.mark.db_test
 
 
 class TestCliDags:
+    parser: argparse.ArgumentParser
+
     @classmethod
     def setup_class(cls):
         cls.dagbag = DagBag(include_examples=True)
@@ -230,7 +233,7 @@ class TestCliDags:
                         "--task-regex",
                         "run_this_first",
                         "--dry-run",
-                        "--treat-dag-as-regex",
+                        "--treat-dag-id-as-regex",
                         "--start-date",
                         DEFAULT_DATE.isoformat(),
                     ]
@@ -243,6 +246,24 @@ class TestCliDags:
         assert "Task run_this_first located in DAG example_branch_python_operator_decorator\n" in output
         assert f"Dry run of DAG example_branch_operator on {DEFAULT_DATE_REPR}\n" in output
         assert "Task run_this_first located in DAG example_branch_operator\n" in output
+
+    @mock.patch("airflow.cli.commands.dag_command._run_dag_backfill")
+    def test_backfill_treat_dag_as_regex_deprecation(self, _):
+        run_date = DEFAULT_DATE + timedelta(days=1)
+        cli_args = self.parser.parse_args(
+            [
+                "dags",
+                "backfill",
+                "example_bash_operator",
+                "--treat-dag-as-regex",
+                "--start-date",
+                run_date.isoformat(),
+            ]
+        )
+
+        with pytest.warns(DeprecationWarning, match="--treat-dag-as-regex is deprecated"):
+            dag_command.dag_backfill(cli_args)
+        assert cli_args.treat_dag_id_as_regex == cli_args.treat_dag_as_regex
 
     @mock.patch("airflow.cli.commands.dag_command.get_dag")
     def test_backfill_fails_without_loading_dags(self, mock_get_dag):
@@ -310,8 +331,15 @@ class TestCliDags:
         assert "OUT" in out
         assert "ERR" in out
 
+    @pytest.mark.parametrize(
+        "cli_arg",
+        [
+            pytest.param("-I", id="short"),
+            pytest.param("--ignore-first-depends-on-past", id="full"),
+        ],
+    )
     @mock.patch("airflow.cli.commands.dag_command.DAG.run")
-    def test_cli_backfill_depends_on_past(self, mock_run):
+    def test_cli_backfill_deprecated_ignore_first_depends_on_past(self, mock_run, cli_arg: str):
         """
         Test that CLI respects -I argument
 
@@ -327,11 +355,12 @@ class TestCliDags:
             "--local",
             "--start-date",
             run_date.isoformat(),
-            "--ignore-first-depends-on-past",
+            cli_arg,
         ]
         dag = self.dagbag.get_dag(dag_id)
 
-        dag_command.dag_backfill(self.parser.parse_args(args), dag=dag)
+        with pytest.warns(RemovedInAirflow3Warning, match="ignore-first-depends-on-past is deprecated"):
+            dag_command.dag_backfill(self.parser.parse_args(args), dag=dag)
 
         mock_run.assert_called_once_with(
             start_date=run_date,
@@ -351,11 +380,16 @@ class TestCliDags:
             disable_retry=False,
         )
 
+    @pytest.mark.parametrize(
+        "cli_arg",
+        [
+            pytest.param("-B", id="short"),
+            pytest.param("--run-backwards", id="full"),
+        ],
+    )
     @mock.patch("airflow.cli.commands.dag_command.DAG.run")
-    def test_cli_backfill_depends_on_past_backwards(self, mock_run):
-        """
-        Test that CLI respects -B argument and raises on interaction with depends_on_past
-        """
+    def test_cli_backfill_depends_on_past_run_backwards(self, mock_run, cli_arg: str):
+        """Test that CLI respects -B argument."""
         dag_id = "test_depends_on_past"
         start_date = DEFAULT_DATE + timedelta(days=1)
         end_date = start_date + timedelta(days=1)
@@ -368,8 +402,7 @@ class TestCliDags:
             start_date.isoformat(),
             "--end-date",
             end_date.isoformat(),
-            "--ignore-first-depends-on-past",
-            "--run-backwards",
+            cli_arg,
         ]
         dag = self.dagbag.get_dag(dag_id)
 
@@ -650,11 +683,59 @@ class TestCliDags:
     def test_pause(self):
         args = self.parser.parse_args(["dags", "pause", "example_bash_operator"])
         dag_command.dag_pause(args)
-        assert self.dagbag.dags["example_bash_operator"].get_is_paused() in [True, 1]
-
-        args = self.parser.parse_args(["dags", "unpause", "example_bash_operator"])
+        assert self.dagbag.dags["example_bash_operator"].get_is_paused()
         dag_command.dag_unpause(args)
-        assert self.dagbag.dags["example_bash_operator"].get_is_paused() in [False, 0]
+        assert not self.dagbag.dags["example_bash_operator"].get_is_paused()
+
+    @mock.patch("airflow.cli.commands.dag_command.ask_yesno")
+    def test_pause_regex(self, mock_yesno):
+        args = self.parser.parse_args(["dags", "pause", "^example_.*$", "--treat-dag-id-as-regex"])
+        dag_command.dag_pause(args)
+        mock_yesno.assert_called_once()
+        assert self.dagbag.dags["example_bash_decorator"].get_is_paused()
+        assert self.dagbag.dags["example_kubernetes_executor"].get_is_paused()
+        assert self.dagbag.dags["example_xcom_args"].get_is_paused()
+
+        args = self.parser.parse_args(["dags", "unpause", "^example_.*$", "--treat-dag-id-as-regex"])
+        dag_command.dag_unpause(args)
+        assert not self.dagbag.dags["example_bash_decorator"].get_is_paused()
+        assert not self.dagbag.dags["example_kubernetes_executor"].get_is_paused()
+        assert not self.dagbag.dags["example_xcom_args"].get_is_paused()
+
+    @mock.patch("airflow.cli.commands.dag_command.ask_yesno")
+    def test_pause_regex_operation_cancelled(self, ask_yesno, capsys):
+        args = self.parser.parse_args(["dags", "pause", "example_bash_operator", "--treat-dag-id-as-regex"])
+        ask_yesno.return_value = False
+        dag_command.dag_pause(args)
+        stdout = capsys.readouterr().out
+        assert "Operation cancelled by user" in stdout
+
+    @mock.patch("airflow.cli.commands.dag_command.ask_yesno")
+    def test_pause_regex_yes(self, mock_yesno):
+        args = self.parser.parse_args(["dags", "pause", ".*", "--treat-dag-id-as-regex", "--yes"])
+        dag_command.dag_pause(args)
+        mock_yesno.assert_not_called()
+        dag_command.dag_unpause(args)
+
+    def test_pause_non_existing_dag_error(self):
+        args = self.parser.parse_args(["dags", "pause", "non_existing_dag"])
+        with pytest.raises(AirflowException):
+            dag_command.dag_pause(args)
+
+    def test_unpause_already_unpaused_dag_do_not_error(self):
+        args = self.parser.parse_args(["dags", "unpause", "example_bash_operator", "--yes"])
+        with contextlib.redirect_stdout(StringIO()) as temp_stdout:
+            dag_command.dag_unpause(args)
+            out = temp_stdout.getvalue().strip().splitlines()[-1]
+        assert out == "No paused DAGs were found"
+
+    def test_pausing_already_paused_dag_do_not_error(self):
+        args = self.parser.parse_args(["dags", "pause", "example_bash_operator", "--yes"])
+        with contextlib.redirect_stdout(StringIO()) as temp_stdout:
+            dag_command.dag_pause(args)
+            dag_command.dag_pause(args)
+            out = temp_stdout.getvalue().strip().splitlines()[-1]
+        assert out == "No unpaused DAGs were found"
 
     def test_trigger_dag(self):
         dag_command.dag_trigger(

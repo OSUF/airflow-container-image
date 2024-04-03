@@ -16,6 +16,7 @@
 # under the License.
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import tempfile
@@ -567,28 +568,57 @@ class KubernetesHook(BaseHook, PodOperatorHookProtocol):
 
         :return: Boolean indicating that the given job is complete.
         """
-        if conditions := job.status.conditions:
-            if final_condition_types := list(
-                c for c in conditions if c.type in JOB_FINAL_STATUS_CONDITION_TYPES and c.status
-            ):
-                s = "s" if len(final_condition_types) > 1 else ""
-                self.log.info(
-                    "The job '%s' state%s: %s",
-                    job.metadata.name,
-                    s,
-                    ", ".join(f"{c.type} at {c.last_transition_time}" for c in final_condition_types),
-                )
-                return True
+        if status := job.status:
+            if conditions := status.conditions:
+                if final_condition_types := list(
+                    c for c in conditions if c.type in JOB_FINAL_STATUS_CONDITION_TYPES and c.status
+                ):
+                    s = "s" if len(final_condition_types) > 1 else ""
+                    self.log.info(
+                        "The job '%s' state%s: %s",
+                        job.metadata.name,
+                        s,
+                        ", ".join(f"{c.type} at {c.last_transition_time}" for c in final_condition_types),
+                    )
+                    return True
         return False
 
     @staticmethod
-    def is_job_failed(job: V1Job) -> bool:
+    def is_job_failed(job: V1Job) -> str | bool:
         """Check whether the given job is failed.
 
-        :return: Boolean indicating that the given job is failed.
+        :return: Error message if the job is failed, and False otherwise.
         """
-        conditions = job.status.conditions or []
-        return bool(next((c for c in conditions if c.type == "Failed" and c.status), None))
+        if status := job.status:
+            conditions = status.conditions or []
+            if fail_condition := next((c for c in conditions if c.type == "Failed" and c.status), None):
+                return fail_condition.reason
+        return False
+
+    @staticmethod
+    def is_job_successful(job: V1Job) -> str | bool:
+        """Check whether the given job is completed successfully..
+
+        :return: Error message if the job is failed, and False otherwise.
+        """
+        if status := job.status:
+            conditions = status.conditions or []
+            return bool(next((c for c in conditions if c.type == "Complete" and c.status), None))
+        return False
+
+    def patch_namespaced_job(self, job_name: str, namespace: str, body: object) -> V1Job:
+        """
+        Update the specified Job.
+
+        :param job_name: name of the Job
+        :param namespace: the namespace to run within kubernetes
+        :param body: json object with parameters for update
+        """
+        return self.batch_v1_client.patch_namespaced_job(
+            name=job_name,
+            namespace=namespace,
+            body=body,
+        )
 
 
 def _get_bool(val) -> bool | None:
@@ -755,3 +785,34 @@ class AsyncKubernetesHook(KubernetesHook):
             except HTTPError:
                 self.log.exception("There was an error reading the kubernetes API.")
                 raise
+
+    async def get_job_status(self, name: str, namespace: str) -> V1Job:
+        """
+        Get job's status object.
+
+        :param name: Name of the pod.
+        :param namespace: Name of the pod's namespace.
+        """
+        async with self.get_conn() as connection:
+            v1_api = async_client.BatchV1Api(connection)
+            job: V1Job = await v1_api.read_namespaced_job_status(
+                name=name,
+                namespace=namespace,
+            )
+        return job
+
+    async def wait_until_job_complete(self, name: str, namespace: str, poll_interval: float = 10) -> V1Job:
+        """Block job of specified name and namespace until it is complete or failed.
+
+        :param name: Name of Job to fetch.
+        :param namespace: Namespace of the Job.
+        :param poll_interval: Interval in seconds between polling the job status
+        :return: Job object
+        """
+        while True:
+            self.log.info("Requesting status for the job '%s' ", name)
+            job: V1Job = await self.get_job_status(name=name, namespace=namespace)
+            if self.is_job_complete(job=job):
+                return job
+            self.log.info("The job '%s' is incomplete. Sleeping for %i sec.", name, poll_interval)
+            await asyncio.sleep(poll_interval)

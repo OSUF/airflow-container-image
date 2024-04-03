@@ -25,7 +25,11 @@ import os
 from datetime import datetime
 
 from airflow import DAG
-from airflow.providers.cncf.kubernetes.operators.job import KubernetesDeleteJobOperator, KubernetesJobOperator
+from airflow.providers.cncf.kubernetes.operators.job import (
+    KubernetesDeleteJobOperator,
+    KubernetesJobOperator,
+    KubernetesPatchJobOperator,
+)
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
 DAG_ID = "example_kubernetes_job_operator"
@@ -49,15 +53,46 @@ with DAG(
     )
     # [END howto_operator_k8s_job]
 
+    # [START howto_operator_update_job]
+    update_job = KubernetesPatchJobOperator(
+        task_id="update-job-task",
+        namespace="default",
+        name=k8s_job.output["job_name"],
+        body={"spec": {"suspend": False}},
+    )
+    # [END howto_operator_update_job]
+
+    # [START howto_operator_k8s_job_deferrable]
+    k8s_job_def = KubernetesJobOperator(
+        task_id="job-task-def",
+        namespace="default",
+        image="perl:5.34.0",
+        cmds=["perl", "-Mbignum=bpi", "-wle", "print bpi(2000)"],
+        name=JOB_NAME + "-def",
+        wait_until_job_complete=True,
+        deferrable=True,
+    )
+    # [END howto_operator_k8s_job_deferrable]
+
     # [START howto_operator_delete_k8s_job]
     delete_job_task = KubernetesDeleteJobOperator(
         task_id="delete_job_task",
-        name=JOB_NAME,
+        name=k8s_job.output["job_name"],
         namespace=JOB_NAMESPACE,
+        wait_for_completion=True,
+        delete_on_status="Complete",
+        poll_interval=1.0,
     )
     # [END howto_operator_delete_k8s_job]
 
-    k8s_job >> delete_job_task
+    delete_job_task_def = KubernetesDeleteJobOperator(
+        task_id="delete_job_task_def",
+        name=k8s_job_def.output["job_name"],
+        namespace=JOB_NAMESPACE,
+    )
+
+    k8s_job >> update_job >> delete_job_task
+    k8s_job_def >> delete_job_task_def
 
     from tests.system.utils.watcher import watcher
 
