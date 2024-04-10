@@ -23,7 +23,7 @@ RUN if [[ -f /docker-context-files/azcopy ]]; then \
 USER airflow
 
 RUN if [[ -f /docker-context-files/requirements.txt ]]; then \
-        pip install --no-cache-dir --user -r /docker-context-files/requirements.txt; \
+        pip install --no-cache-dir -r /docker-context-files/requirements.txt; \
     fi
 
 USER root
