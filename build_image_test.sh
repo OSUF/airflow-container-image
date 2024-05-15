@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-AIRFLOW_VERSION="2.9.0"
+AIRFLOW_VERSION="2.9.1"
 
 CMD1=(
     docker build .
-    --build-arg PYTHON_BASE_IMAGE="python:3.11-slim-bullseye"
+    --build-arg PYTHON_BASE_IMAGE="python:3.12-slim-bullseye"
     --build-arg AIRFLOW_VERSION=$AIRFLOW_VERSION
     --build-arg AIRFLOW_EXTRAS="async,postgres,microsoft.azure,microsoft.mssql,sftp,opsgenie,snowflake,celery,amazon,redis,ldap,odbc,pandas"
     --build-arg INSTALL_MYSQL_CLIENT="false"
