@@ -101,8 +101,9 @@ MOUNT_SELECTED = "selected"
 MOUNT_ALL = "all"
 MOUNT_SKIP = "skip"
 MOUNT_REMOVE = "remove"
+MOUNT_TESTS = "tests"
 
-ALLOWED_MOUNT_OPTIONS = [MOUNT_SELECTED, MOUNT_ALL, MOUNT_SKIP, MOUNT_REMOVE]
+ALLOWED_MOUNT_OPTIONS = [MOUNT_SELECTED, MOUNT_ALL, MOUNT_SKIP, MOUNT_REMOVE, MOUNT_TESTS]
 ALLOWED_POSTGRES_VERSIONS = ["12", "13", "14", "15", "16"]
 # Oracle introduced new release model for MySQL
 # - LTS: Long Time Support releases, new release approx every 2 year,
@@ -110,9 +111,9 @@ ALLOWED_POSTGRES_VERSIONS = ["12", "13", "14", "15", "16"]
 #  the first LTS release should be in summer/fall 2024.
 # - Innovations: Shot living releases with short support cycle - only until next Innovation/LTS release.
 # See: https://dev.mysql.com/blog-archive/introducing-mysql-innovation-and-long-term-support-lts-versions/
-MYSQL_LTS_RELEASES: list[str] = []
+MYSQL_LTS_RELEASES: list[str] = ["8.4"]
 MYSQL_OLD_RELEASES = ["8.0"]
-MYSQL_INNOVATION_RELEASE = "8.3"
+MYSQL_INNOVATION_RELEASE: str | None = None
 ALLOWED_MYSQL_VERSIONS = [*MYSQL_OLD_RELEASES, *MYSQL_LTS_RELEASES]
 if MYSQL_INNOVATION_RELEASE:
     ALLOWED_MYSQL_VERSIONS.append(MYSQL_INNOVATION_RELEASE)
@@ -368,6 +369,7 @@ def get_airflow_version():
     return airflow_version
 
 
+@lru_cache(maxsize=None)
 def get_airflow_extras():
     airflow_dockerfile = AIRFLOW_SOURCES_ROOT / "Dockerfile"
     with open(airflow_dockerfile) as dockerfile:
@@ -464,15 +466,12 @@ CHICKEN_EGG_PROVIDERS = " ".join([])
 
 
 def _exclusion(providers: Iterable[str]) -> str:
-    return " ".join([f"apache_airflow_providers_{provider.replace('.', '_')}*" for provider in providers])
+    return " ".join(
+        [f"apache_airflow_providers_{provider.replace('.', '_').replace('-','_')}*" for provider in providers]
+    )
 
 
 BASE_PROVIDERS_COMPATIBILITY_CHECKS: list[dict[str, str]] = [
-    {
-        "python-version": "3.8",
-        "airflow-version": "2.6.0",
-        "remove-providers": _exclusion(["openlineage", "common.io", "cohere", "fab", "qdrant"]),
-    },
     {
         "python-version": "3.8",
         "airflow-version": "2.7.1",
