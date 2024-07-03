@@ -209,7 +209,8 @@ class AthenaOperator(AwsBaseOperator[AthenaHook]):
                     self.hook.poll_query_status(self.query_execution_id, sleep_time=self.sleep_time)
 
     def get_openlineage_facets_on_start(self) -> OperatorLineage:
-        """Retrieve OpenLineage data by parsing SQL queries and enriching them with Athena API.
+        """
+        Retrieve OpenLineage data by parsing SQL queries and enriching them with Athena API.
 
         In addition to CTAS query, query and calculation results are stored in S3 location.
         For that reason additional output is attached with this location.
@@ -266,7 +267,7 @@ class AthenaOperator(AwsBaseOperator[AthenaHook]):
 
         if self.output_location:
             parsed = urlparse(self.output_location)
-            outputs.append(Dataset(namespace=f"{parsed.scheme}://{parsed.netloc}", name=parsed.path))
+            outputs.append(Dataset(namespace=f"{parsed.scheme}://{parsed.netloc}", name=parsed.path or "/"))
 
         return OperatorLineage(job_facets=job_facets, run_facets=run_facets, inputs=inputs, outputs=outputs)
 
