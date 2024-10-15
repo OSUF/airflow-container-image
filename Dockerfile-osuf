@@ -7,7 +7,11 @@ ARG ENV
 USER root
 
 # Change necessary to connect to SQL server
-RUN sed -i 's/SECLEVEL=2/SECLEVEL=1/g' /etc/ssl/openssl.cnf
+# RUN sed -i 's/SECLEVEL=2/SECLEVEL=0/g' /etc/ssl/openssl.cnf
+RUN sed -i '/\[openssl_init\]/a ssl_conf = ssl_configuration' /etc/ssl/openssl.cnf
+RUN echo -e "\n[ssl_configuration]\nsystem_default = tls_system_default" >> /etc/ssl/openssl.cnf
+RUN echo -e "\n[tls_system_default]\nCipherString = DEFAULT:@SECLEVEL=0" >> /etc/ssl/openssl.cnf
+
 
 COPY docker-context-files /docker-context-files
 RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
