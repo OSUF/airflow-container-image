@@ -65,7 +65,6 @@ interface DagRun {
   lastSchedulingDecision: string | null;
   externalTrigger: boolean;
   conf: string | null;
-  confIsJson: boolean;
   note: string | null;
 }
 
@@ -134,7 +133,14 @@ interface DepNode {
   id: string;
   value: {
     id?: string;
-    class: "dag" | "dataset" | "trigger" | "sensor";
+    class:
+      | "dag"
+      | "asset"
+      | "trigger"
+      | "sensor"
+      | "or-gate"
+      | "and-gate"
+      | "asset-alias";
     label: string;
     rx?: number;
     ry?: number;
@@ -187,7 +193,7 @@ export interface WebserverEdge {
   isSourceDataset?: boolean;
 }
 
-interface DatasetListItem extends API.Dataset {
+interface DatasetListItem extends API.Asset {
   lastDatasetUpdate: string | null;
   totalUpdates: number;
 }
