@@ -150,6 +150,8 @@ class DbApiHook(BaseHook):
     conn_name_attr: str
     # Override to have a default connection id for a particular dbHook
     default_conn_name = "default_conn_id"
+    # Override if this db doesn't support semicolons in SQL queries
+    strip_semicolon = False
     # Override if this db supports autocommit.
     supports_autocommit = False
     # Override if this db supports executemany.
@@ -369,14 +371,18 @@ class DbApiHook(BaseHook):
         return sql.strip().rstrip(";")
 
     @staticmethod
-    def split_sql_string(sql: str) -> list[str]:
+    def split_sql_string(sql: str, strip_semicolon: bool = False) -> list[str]:
         """
         Split string into multiple SQL expressions.
 
         :param sql: SQL string potentially consisting of multiple expressions
+        :param strip_semicolon: whether to strip semicolon from SQL string
         :return: list of individual expressions
         """
-        splits = sqlparse.split(sqlparse.format(sql, strip_comments=True))
+        splits = sqlparse.split(
+            sql=sqlparse.format(sql, strip_comments=True),
+            strip_semicolon=strip_semicolon,
+        )
         return [s for s in splits if s]
 
     @property
@@ -471,7 +477,10 @@ class DbApiHook(BaseHook):
 
         if isinstance(sql, str):
             if split_statements:
-                sql_list: Iterable[str] = self.split_sql_string(sql)
+                sql_list: Iterable[str] = self.split_sql_string(
+                    sql=sql,
+                    strip_semicolon=self.strip_semicolon,
+                )
             else:
                 sql_list = [sql] if sql.strip() else []
         else:
@@ -620,6 +629,7 @@ class DbApiHook(BaseHook):
         replace=False,
         *,
         executemany=False,
+        fast_executemany=False,
         autocommit=False,
         **kwargs,
     ):
@@ -638,6 +648,8 @@ class DbApiHook(BaseHook):
         :param executemany: If True, all rows are inserted at once in
             chunks defined by the commit_every parameter. This only works if all rows
             have same number of column names, but leads to better performance.
+        :param fast_executemany: If True, the `fast_executemany` parameter will be set on the
+            cursor used by `executemany` which leads to better performance, if supported by driver.
         :param autocommit: What to set the connection's autocommit setting to
             before executing the query.
         """
@@ -646,6 +658,15 @@ class DbApiHook(BaseHook):
             conn.commit()
             with closing(conn.cursor()) as cur:
                 if self.supports_executemany or executemany:
+                    if fast_executemany:
+                        with contextlib.suppress(AttributeError):
+                            # Try to set the fast_executemany attribute
+                            cur.fast_executemany = True
+                            self.log.info(
+                                "Fast_executemany is enabled for conn_id '%s'!",
+                                self.get_conn_id(),
+                            )
+
                     for chunked_rows in chunked(rows, commit_every):
                         values = list(
                             map(

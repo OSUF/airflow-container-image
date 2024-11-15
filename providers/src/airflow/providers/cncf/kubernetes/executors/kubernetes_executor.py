@@ -36,11 +36,16 @@ from queue import Empty, Queue
 from typing import TYPE_CHECKING, Any, Sequence
 
 from kubernetes.dynamic import DynamicClient
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
+try:
+    from airflow.cli.cli_config import ARG_LOGICAL_DATE
+except ImportError:  # 2.x compatibility.
+    from airflow.cli.cli_config import (  # type: ignore[attr-defined, no-redef]
+        ARG_EXECUTION_DATE as ARG_LOGICAL_DATE,
+    )
 from airflow.cli.cli_config import (
     ARG_DAG_ID,
-    ARG_EXECUTION_DATE,
     ARG_OUTPUT_PATH,
     ARG_SUBDIR,
     ARG_VERBOSE,
@@ -52,6 +57,7 @@ from airflow.cli.cli_config import (
 )
 from airflow.configuration import conf
 from airflow.executors.base_executor import BaseExecutor
+from airflow.executors.executor_constants import KUBERNETES_EXECUTOR
 from airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types import (
     ADOPTED,
     POD_EXECUTOR_DONE_KEY,
@@ -117,7 +123,7 @@ KUBERNETES_COMMANDS = (
         help="Generate YAML files for all tasks in DAG. Useful for debugging tasks without "
         "launching into a cluster",
         func=lazy_load_command("airflow.providers.cncf.kubernetes.cli.kubernetes_command.generate_pod_yaml"),
-        args=(ARG_DAG_ID, ARG_EXECUTION_DATE, ARG_SUBDIR, ARG_OUTPUT_PATH, ARG_VERBOSE),
+        args=(ARG_DAG_ID, ARG_LOGICAL_DATE, ARG_SUBDIR, ARG_OUTPUT_PATH, ARG_VERBOSE),
     ),
 )
 
@@ -229,13 +235,30 @@ class KubernetesExecutor(BaseExecutor):
             assert self.kube_client
         from airflow.models.taskinstance import TaskInstance
 
+        hybrid_executor_enabled = hasattr(TaskInstance, "executor")
+        default_executor = None
+        if hybrid_executor_enabled:
+            from airflow.executors.executor_loader import ExecutorLoader
+
+            default_executor = str(ExecutorLoader.get_default_executor_name())
+
         with Stats.timer("kubernetes_executor.clear_not_launched_queued_tasks.duration"):
             self.log.debug("Clearing tasks that have not been launched")
             query = select(TaskInstance).where(
-                TaskInstance.state == TaskInstanceState.QUEUED, TaskInstance.queued_by_job_id == self.job_id
+                TaskInstance.state == TaskInstanceState.QUEUED,
+                TaskInstance.queued_by_job_id == self.job_id,
             )
             if self.kubernetes_queue:
                 query = query.where(TaskInstance.queue == self.kubernetes_queue)
+            elif hybrid_executor_enabled and KUBERNETES_EXECUTOR == default_executor:
+                query = query.where(
+                    or_(
+                        TaskInstance.executor == KUBERNETES_EXECUTOR,
+                        TaskInstance.executor.is_(None),
+                    ),
+                )
+            elif hybrid_executor_enabled:
+                query = query.where(TaskInstance.executor == KUBERNETES_EXECUTOR)
             queued_tis: list[TaskInstance] = session.scalars(query).all()
             self.log.info("Found %s queued task instances", len(queued_tis))
 
@@ -750,8 +773,13 @@ class KubernetesExecutor(BaseExecutor):
             self.result_queue.join()
         except ConnectionResetError:
             self.log.exception("Connection Reset error while flushing task_queue and result_queue.")
+        except Exception:
+            self.log.exception("Unknown error while flushing task queue and result queue.")
         if self.kube_scheduler:
-            self.kube_scheduler.terminate()
+            try:
+                self.kube_scheduler.terminate()
+            except Exception:
+                self.log.exception("Unknown error while flushing task queue and result queue.")
         self._manager.shutdown()
 
     def terminate(self):

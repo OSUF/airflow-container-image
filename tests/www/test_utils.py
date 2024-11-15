@@ -44,6 +44,7 @@ from airflow.www.utils import (
     wrapped_markdown,
 )
 from airflow.www.widgets import AirflowDateTimePickerROWidget, BS3TextAreaROWidget, BS3TextFieldROWidget
+
 from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS
 
 if AIRFLOW_V_3_0_PLUS:
@@ -234,13 +235,13 @@ class TestUtils:
         with cached_app(testing=True).test_request_context():
             html = str(
                 utils.task_instance_link(
-                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": 1, "execution_date": datetime.now()}
+                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": 1, "logical_date": datetime.now()}
                 )
             )
 
             html_map_index_none = str(
                 utils.task_instance_link(
-                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": -1, "execution_date": datetime.now()}
+                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": -1, "logical_date": datetime.now()}
                 )
             )
 
@@ -262,7 +263,7 @@ class TestUtils:
         from airflow.www.app import cached_app
 
         with cached_app(testing=True).test_request_context():
-            html = str(utils.dag_link({"dag_id": "<a&1>", "execution_date": datetime.now()}))
+            html = str(utils.dag_link({"dag_id": "<a&1>", "logical_date": datetime.now()}))
 
         assert "%3Ca%261%3E" in html
         assert "<a&1>" not in html
@@ -286,7 +287,7 @@ class TestUtils:
 
         with cached_app(testing=True).test_request_context():
             html = str(
-                utils.dag_run_link({"dag_id": "<a&1>", "run_id": "<b2>", "execution_date": datetime.now()})
+                utils.dag_run_link({"dag_id": "<a&1>", "run_id": "<b2>", "logical_date": datetime.now()})
             )
 
         assert "%3Ca%261%3E" in html
@@ -508,7 +509,7 @@ class TestWrappedMarkdown:
                         "data_interval_end": None,
                         "data_interval_start": None,
                         "end_date": None,
-                        "execution_date": None,
+                        "logical_date": None,
                         "external_trigger": None,
                         "last_scheduling_decision": None,
                         "note": None,
@@ -624,7 +625,7 @@ def test_dag_run_custom_sqla_interface_delete_no_collateral_damage(dag_maker, se
     for dag_id, date in itertools.product(dag_ids, dates):
         with dag_maker(dag_id=dag_id) as dag:
             dag.create_dagrun(
-                execution_date=date,
+                logical_date=date,
                 state="running",
                 run_type="scheduled",
                 data_interval=(date, date),

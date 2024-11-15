@@ -27,6 +27,67 @@
 Changelog
 ---------
 
+10.26.0
+.......
+
+Features
+~~~~~~~~
+
+* ``Add support for IAM database authentication for CloudSQL connection (#43631)``
+* ``Provide option to 'force_delete' for 'GCSToBigQueryOperator' (#43785)``
+* ``Unify reattach_states parameter logic across BigQuery operators (#43259)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Remove non-existing field  from the ListCustomTrainingJobOperator's template_fields (#43924)``
+* ``Fix validating 'parent_model' parameter in 'UploadModelOperator' (#43473)``
+
+Misc
+~~~~
+
+* ``Add support for semicolon stripping to DbApiHook, PrestoHook, and TrinoHook (#41916)``
+* ``Remove Airflow 2.1 compat code in Google provider (#43952)``
+* ``Explain how to use uv with airflow virtualenv and make it works (#43604)``
+* ``Move python operator to Standard provider (#42081)``
+* ``Update version of Google ADS (#43474)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Fix CI ruff format static checks (#43908)``
+
+10.25.0
+.......
+
+Features
+~~~~~~~~
+
+* ``feat: add Hook Level Lineage support for GCSHook (#42507)``
+* ``feat: sensor to check status of Dataform action (#43055)``
+* ``Create Operators for Google Cloud Vertex AI Context Caching (#43008)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix outdated CloudRunExecuteJobOperator docs (#43195)``
+* ``Fix TestTranslationLegacyModelPredictLink dataset_id error (#42463)``
+
+Misc
+~~~~
+
+* ``Add a debug log for creating batch workloads in dataproc (#43265)``
+* ``add min version to plyvel (#43129)``
+* ``vertex ai training operators: add display_name to rendered fields (#43028)``
+* ``Make google provider pyarrow dependency explicit (#42996)``
+* ``Restrict looker-sdk version 24.18.0 and microsoft-kiota-http 1.3.4 (#42954)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove dag.run() method (#42761)``
+   * ``Split providers out of the main "airflow/" tree into a UV workspace project (#42505)``
+
 10.24.0
 .......
 

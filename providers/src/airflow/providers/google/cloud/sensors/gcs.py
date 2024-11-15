@@ -178,21 +178,10 @@ def ts_function(context):
     """
     Act as a default callback for the GoogleCloudStorageObjectUpdatedSensor.
 
-    The default behaviour is check for the object being updated after the data interval's end,
-    or execution_date + interval on Airflow versions prior to 2.2 (before AIP-39 implementation).
+    The default behaviour is check for the object being updated after the data
+    interval's end.
     """
-    try:
-        return context["data_interval_end"]
-    except KeyError:
-        from airflow.utils import timezone
-
-        data_interval = context["dag"].infer_automated_data_interval(
-            timezone.coerce_datetime(context["execution_date"])
-        )
-        next_info = context["dag"].next_dagrun_info(data_interval, restricted=False)
-        if next_info is None:
-            return None
-        return next_info.data_interval.start
+    return context["data_interval_end"]
 
 
 class GCSObjectUpdateSensor(BaseSensorOperator):
@@ -203,7 +192,7 @@ class GCSObjectUpdateSensor(BaseSensorOperator):
     :param object: The name of the object to download in the Google cloud
         storage bucket.
     :param ts_func: Callback for defining the update condition. The default callback
-        returns execution_date + schedule_interval. The callback takes the context
+        returns logical_date + schedule_interval. The callback takes the context
         as parameter.
     :param google_cloud_conn_id: The connection ID to use when
         connecting to Google Cloud Storage.

@@ -50,7 +50,7 @@ def validate_key(k: str, max_length: int = 250):
     if not isinstance(k, str):
         raise TypeError(f"The key has to be a string and is {type(k)}:{k}")
     if len(k) > max_length:
-        raise AirflowException(f"The key has to be less than {max_length} characters")
+        raise AirflowException(f"The key: {k} has to be less than {max_length} characters")
     if not KEY_REGEX.match(k):
         raise AirflowException(
             f"The key {k!r} has to be made of alphanumeric characters, dashes, "
@@ -198,7 +198,7 @@ def render_log_filename(ti: TaskInstance, try_number, filename_template) -> str:
     return filename_template.format(
         dag_id=ti.dag_id,
         task_id=ti.task_id,
-        execution_date=ti.execution_date.isoformat(),
+        logical_date=ti.logical_date.isoformat(),
         try_number=try_number,
     )
 
@@ -234,7 +234,7 @@ def build_airflow_url_with_query(query: dict[str, Any]) -> str:
     Build airflow url using base_url and default_view and provided query.
 
     For example:
-    http://0.0.0.0:8000/base/graph?dag_id=my-task&root=&execution_date=2020-10-27T10%3A59%3A25.615587
+    http://0.0.0.0:8000/base/graph?dag_id=my-task&root=&logical_date=2020-10-27T10%3A59%3A25.615587
     """
     import flask
 

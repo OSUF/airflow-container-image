@@ -19,11 +19,11 @@ from __future__ import annotations
 import os
 
 import pytest
-from tests_common.test_utils.gcp_system_helpers import GoogleSystemTest, provide_gcp_context
 
 from airflow.providers.google.cloud.hooks.secret_manager import SecretsManagerHook
 
 from providers.tests.google.cloud.utils.gcp_authenticator import GCP_SECRET_MANAGER_KEY
+from tests_common.test_utils.gcp_system_helpers import GoogleSystemTest, provide_gcp_context
 
 TEST_SECRET_ID = os.environ.get("GCP_SECRET_MANAGER_SECRET_ID", "test-secret")
 TEST_SECRET_VALUE = os.environ.get("GCP_SECRET_MANAGER_SECRET_VALUE", "test-secret-value")
@@ -48,7 +48,7 @@ def helper_two_versions():
     GoogleSystemTest.delete_secret(TEST_SECRET_ID)
 
 
-@pytest.mark.system("google.secret_manager")
+@pytest.mark.system
 @pytest.mark.credential_file(GCP_SECRET_MANAGER_KEY)
 class TestSecretsManagerSystem(GoogleSystemTest):
     @pytest.mark.usefixtures("helper_one_version")

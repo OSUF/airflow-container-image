@@ -27,8 +27,6 @@ from google.api_core.retry import Retry
 from google.api_core.retry_async import AsyncRetry
 from google.cloud import dataproc
 from google.cloud.dataproc_v1 import Batch, Cluster, JobStatus
-from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_VERSION
-from tests_common.test_utils.db import clear_db_runs, clear_db_xcom
 
 from airflow.exceptions import (
     AirflowException,
@@ -81,6 +79,9 @@ from airflow.providers.google.cloud.triggers.dataproc import (
 from airflow.providers.google.common.consts import GOOGLE_DEFAULT_DEFERRABLE_METHOD_NAME
 from airflow.serialization.serialized_objects import SerializedDAG
 from airflow.utils.timezone import datetime
+
+from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_VERSION
+from tests_common.test_utils.db import clear_db_runs, clear_db_xcom
 
 AIRFLOW_VERSION_LABEL = "v" + str(AIRFLOW_VERSION).replace(".", "-").replace("+", "-")
 
@@ -1081,7 +1082,6 @@ def test_create_cluster_operator_extra_links(dag_maker, create_task_instance_of_
     ti = create_task_instance_of_operator(
         DataprocCreateClusterOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         project_id=GCP_PROJECT,
@@ -1191,7 +1191,6 @@ def test_scale_cluster_operator_extra_links(dag_maker, create_task_instance_of_o
     ti = create_task_instance_of_operator(
         DataprocScaleClusterOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         cluster_name=CLUSTER_NAME,
         project_id=GCP_PROJECT,
@@ -1576,7 +1575,7 @@ class TestDataprocSubmitJobOperator(DataprocJobTestBase):
         )
 
     def test_missing_region_parameter(self):
-        with pytest.raises(AirflowException):
+        with pytest.raises((TypeError, AirflowException), match="missing keyword argument 'region'"):
             DataprocSubmitJobOperator(
                 task_id=TASK_ID,
                 project_id=GCP_PROJECT,
@@ -1598,7 +1597,6 @@ def test_submit_job_operator_extra_links(mock_hook, dag_maker, create_task_insta
     ti = create_task_instance_of_operator(
         DataprocSubmitJobOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         project_id=GCP_PROJECT,
@@ -1691,7 +1689,7 @@ class TestDataprocUpdateClusterOperator(DataprocClusterTestBase):
             )
 
     def test_missing_region_parameter(self):
-        with pytest.raises(AirflowException):
+        with pytest.raises((TypeError, AirflowException), match="missing keyword argument 'region'"):
             DataprocUpdateClusterOperator(
                 task_id=TASK_ID,
                 cluster_name=CLUSTER_NAME,
@@ -1806,7 +1804,6 @@ def test_update_cluster_operator_extra_links(dag_maker, create_task_instance_of_
     ti = create_task_instance_of_operator(
         DataprocUpdateClusterOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         cluster_name=CLUSTER_NAME,
@@ -2032,7 +2029,6 @@ def test_instantiate_workflow_operator_extra_links(mock_hook, dag_maker, create_
     ti = create_task_instance_of_operator(
         DataprocInstantiateWorkflowTemplateOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         project_id=GCP_PROJECT,
@@ -2194,7 +2190,6 @@ def test_instantiate_inline_workflow_operator_extra_links(
     ti = create_task_instance_of_operator(
         DataprocInstantiateInlineWorkflowTemplateOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         project_id=GCP_PROJECT,
@@ -2523,7 +2518,6 @@ def test_submit_spark_job_operator_extra_links(mock_hook, dag_maker, create_task
     ti = create_task_instance_of_operator(
         DataprocSubmitSparkJobOperator,
         dag_id=TEST_DAG_ID,
-        execution_date=DEFAULT_DATE,
         task_id=TASK_ID,
         region=GCP_REGION,
         gcp_conn_id=GCP_CONN_ID,
@@ -2677,7 +2671,7 @@ class TestDataprocCreateWorkflowTemplateOperator:
         )
 
     def test_missing_region_parameter(self):
-        with pytest.raises(AirflowException):
+        with pytest.raises((TypeError, AirflowException), match="missing keyword argument 'region'"):
             DataprocCreateWorkflowTemplateOperator(
                 task_id=TASK_ID,
                 gcp_conn_id=GCP_CONN_ID,

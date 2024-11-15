@@ -21,12 +21,12 @@ from unittest.mock import Mock, patch
 
 import boto3
 import pytest
-from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.www import check_content_in_response
 
 from airflow.www import app as application
 
 from providers.tests.system.amazon.aws.utils import set_env_id
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.www import check_content_in_response
 
 SAML_METADATA_URL = "/saml/metadata"
 SAML_METADATA_PARSED = {
@@ -165,7 +165,7 @@ def client_admin_permissions(base_app):
     return application.create_app(testing=True)
 
 
-@pytest.mark.system("amazon")
+@pytest.mark.system
 class TestAwsAuthManager:
     """
     Run tests on Airflow using AWS auth manager with real credentials

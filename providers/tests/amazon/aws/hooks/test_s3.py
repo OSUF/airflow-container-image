@@ -30,7 +30,6 @@ import boto3
 import pytest
 from botocore.exceptions import ClientError
 from moto import mock_aws
-from tests_common.test_utils.compat import AIRFLOW_V_2_10_PLUS
 
 from airflow.exceptions import AirflowException
 from airflow.models import Connection
@@ -43,6 +42,8 @@ from airflow.providers.amazon.aws.hooks.s3 import (
     unify_bucket_name_and_key,
 )
 from airflow.utils.timezone import datetime
+
+from tests_common.test_utils.compat import AIRFLOW_V_2_10_PLUS
 
 
 @pytest.fixture
@@ -63,7 +64,7 @@ if AIRFLOW_V_2_10_PLUS:
     @pytest.fixture
     def hook_lineage_collector():
         from airflow.lineage import hook
-        from airflow.providers.amazon.aws.hooks.s3 import get_hook_lineage_collector
+        from airflow.providers.common.compat.lineage.hook import get_hook_lineage_collector
 
         hook._hook_lineage_collector = None
         hook._hook_lineage_collector = hook.HookLineageCollector()
@@ -1158,6 +1159,12 @@ class TestAwsS3Hook:
 
             test_bucket_name = fake_s3_hook.test_function(bucket_name="bucket")
             assert test_bucket_name == "bucket"
+
+            # Test: `bucket_name` should use the explicitly provided value over `service_config`
+            test_bucket_name = fake_s3_hook.test_function(bucket_name="some_custom_bucket")
+            assert (
+                test_bucket_name == "some_custom_bucket"
+            ), "Expected provided bucket_name to take precedence over fallback"
 
     def test_delete_objects_key_does_not_exist(self, s3_bucket):
         # The behaviour of delete changed in recent version of s3 mock libraries.

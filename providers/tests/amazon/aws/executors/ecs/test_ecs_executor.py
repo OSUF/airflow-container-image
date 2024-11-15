@@ -32,9 +32,6 @@ import yaml
 from botocore.exceptions import ClientError
 from inflection import camelize
 from semver import VersionInfo
-from tests_common import RUNNING_TESTS_AGAINST_AIRFLOW_PACKAGES
-from tests_common.test_utils.compat import AIRFLOW_V_2_10_PLUS
-from tests_common.test_utils.config import conf_vars
 
 from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import BaseExecutor
@@ -59,6 +56,10 @@ from airflow.utils.helpers import convert_camel_to_snake
 from airflow.utils.state import State, TaskInstanceState
 from airflow.utils.timezone import utcnow
 from airflow.version import version as airflow_version_str
+
+from tests_common import RUNNING_TESTS_AGAINST_AIRFLOW_PACKAGES
+from tests_common.test_utils.compat import AIRFLOW_V_2_10_PLUS
+from tests_common.test_utils.config import conf_vars
 
 pytestmark = pytest.mark.db_test
 
@@ -171,9 +172,9 @@ def mock_executor(set_env_vars) -> AwsEcsExecutor:
 class TestEcsTaskCollection:
     """Tests EcsTaskCollection Class."""
 
-    # You can't use a fixture in setup_method unless you declare setup_method to be a fixture itself.
+    # You can't use a fixture in _setup_method unless you declare _setup_method to be a fixture itself.
     @pytest.fixture(autouse=True)
-    def setup_method(self, mock_airflow_key):
+    def _setup_method(self, mock_airflow_key):
         # Create a new Collection and verify it is empty.
         self.collection = EcsTaskCollection()
         assert len(self.collection) == 0

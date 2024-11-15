@@ -31,13 +31,14 @@ import pytest
 from airflow import settings
 from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG
 from airflow.models.tasklog import LogTemplate
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.timetables.base import DataInterval
 from airflow.utils import timezone
 from airflow.utils.log.log_reader import TaskLogReader
 from airflow.utils.log.logging_mixin import ExternalLoggingMixin
 from airflow.utils.state import TaskInstanceState
 from airflow.utils.types import DagRunType
+
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
@@ -108,7 +109,7 @@ class TestLogView:
             task_id=self.TASK_ID,
             start_date=self.DEFAULT_DATE,
             run_type=DagRunType.SCHEDULED,
-            execution_date=self.DEFAULT_DATE,
+            logical_date=self.DEFAULT_DATE,
             state=TaskInstanceState.RUNNING,
         )
         ti.try_number = 3
@@ -286,15 +287,15 @@ class TestLogView:
         trigger_time = end + datetime.timedelta(hours=4, minutes=29)  # Arbitrary.
 
         # Create two DAG runs that have the same data interval, but not the same
-        # execution date, to check if they correctly use different log files.
+        # logical date, to check if they correctly use different log files.
         scheduled_dagrun: DagRun = dag_maker.create_dagrun(
             run_type=DagRunType.SCHEDULED,
-            execution_date=start,
+            logical_date=start,
             data_interval=DataInterval(start, end),
         )
         manual_dagrun: DagRun = dag_maker.create_dagrun(
             run_type=DagRunType.MANUAL,
-            execution_date=trigger_time,
+            logical_date=trigger_time,
             data_interval=DataInterval(start, end),
         )
 

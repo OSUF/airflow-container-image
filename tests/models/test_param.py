@@ -26,6 +26,7 @@ from airflow.models.param import Param, ParamsDict
 from airflow.serialization.serialized_objects import BaseSerialization
 from airflow.utils import timezone
 from airflow.utils.types import DagRunType
+
 from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_db_xcom
 
 
@@ -327,7 +328,7 @@ class TestDagParamRuntime:
             start_date=timezone.utcnow(),
         )
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == self.VALUE
@@ -353,7 +354,7 @@ class TestDagParamRuntime:
             conf={"value": new_value},
         )
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == new_value
@@ -373,7 +374,7 @@ class TestDagParamRuntime:
 
         dr = dag_maker.create_dagrun(run_id=DagRunType.MANUAL.value, start_date=timezone.utcnow())
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == "test"

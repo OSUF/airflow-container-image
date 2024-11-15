@@ -24,13 +24,14 @@ from unittest import mock
 
 import pytest
 from azure.common import AzureHttpError
-from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
 from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
 from airflow.providers.microsoft.azure.log.wasb_task_handler import WasbTaskHandler
 from airflow.utils.state import TaskInstanceState
 from airflow.utils.timezone import datetime
+
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
 pytestmark = pytest.mark.db_test
 
@@ -45,7 +46,7 @@ class TestWasbTaskHandler:
         ti = create_task_instance(
             dag_id="dag_for_testing_wasb_task_handler",
             task_id="task_for_testing_wasb_log_handler",
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
             start_date=DEFAULT_DATE,
             dagrun_state=TaskInstanceState.RUNNING,
             state=TaskInstanceState.RUNNING,

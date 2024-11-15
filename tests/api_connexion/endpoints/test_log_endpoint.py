@@ -32,6 +32,7 @@ from airflow.models.dag import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.utils import timezone
 from airflow.utils.types import DagRunType
+
 from tests_common.test_utils.api_connexion_utils import assert_401, create_user, delete_user
 from tests_common.test_utils.db import clear_db_runs
 
@@ -83,7 +84,7 @@ class TestGetLog:
         dr = dag_maker.create_dagrun(
             run_id=self.RUN_ID,
             run_type=DagRunType.SCHEDULED,
-            execution_date=timezone.parse(self.default_time),
+            logical_date=timezone.parse(self.default_time),
             start_date=timezone.parse(self.default_time),
         )
 
@@ -97,7 +98,7 @@ class TestGetLog:
         dr2 = dag_maker.create_dagrun(
             run_id=self.RUN_ID,
             run_type=DagRunType.SCHEDULED,
-            execution_date=timezone.parse(self.default_time),
+            logical_date=timezone.parse(self.default_time),
             start_date=timezone.parse(self.default_time),
         )
         configured_app.dag_bag.bag_dag(dummy_dag)

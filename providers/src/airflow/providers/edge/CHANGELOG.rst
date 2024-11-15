@@ -27,6 +27,96 @@
 Changelog
 ---------
 
+0.5.5pre0
+.........
+
+Misc
+~~~~
+
+* ``Fixed reading none UTF-8 signs in log file.``
+
+0.5.4pre0
+.........
+
+Misc
+~~~~
+
+* ``Fix SIGINT handling of child processes. Ensure graceful shutdown when SIGINT in received (not killing working tasks).``
+* ``Fix SIGTERM handling of child processes. Ensure all childs are terminated on SIGTERM.``
+
+0.5.3pre0
+.........
+
+Misc
+~~~~
+
+* ``Adding some links to host and job overview pages.``
+
+0.5.2pre0
+.........
+
+Misc
+~~~~
+
+* ``Small beautification for host status in Edge Worker view.``
+
+0.5.1pre0
+.........
+
+Misc
+~~~~
+
+* ``Remove warning about missing config in edge plugin loading.``
+
+0.5.0pre0
+.........
+
+Misc
+~~~~
+
+* ``Edge worker triggers graceful shutdown, if worker version and main instance do not match.``
+
+0.4.0pre0
+.........
+
+Misc
+~~~~
+
+* ``Edge Worker uploads log file in chunks. Chunk size can be defined by push_log_chunk_size value in config.``
+
+0.3.0pre0
+.........
+
+Misc
+~~~~
+
+* ``Edge Worker exports metrics``
+* ``State is set to unknown if worker heartbeat times out.``
+
+0.2.2re0
+.........
+
+Misc
+~~~~
+
+* ``Fixed type confusion for PID file paths (#43308)``
+
+0.2.1re0
+.........
+
+Misc
+~~~~
+
+* ``Fixed handling of PID files in Edge Worker (#43153)``
+
+0.2.0pre0
+.........
+
+Misc
+~~~~
+
+* ``Edge Worker can add or remove queues in the queue field in the DB (#43115)``
+
 0.1.0pre0
 .........
 

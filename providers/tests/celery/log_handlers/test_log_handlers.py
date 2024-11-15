@@ -23,8 +23,6 @@ from importlib import reload
 from unittest import mock
 
 import pytest
-from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS
-from tests_common.test_utils.config import conf_vars
 
 from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG
 from airflow.executors import executor_loader
@@ -38,8 +36,7 @@ from airflow.utils.state import TaskInstanceState
 from airflow.utils.timezone import datetime
 from airflow.utils.types import DagRunType
 
-if AIRFLOW_V_3_0_PLUS:
-    pass
+from tests_common.test_utils.config import conf_vars
 
 pytestmark = [pytest.mark.db_test, pytest.mark.skip_if_database_isolation_mode]
 
@@ -67,12 +64,11 @@ class TestFileTaskLogHandler:
         """Test for executors which do not have `get_task_log` method, it fallbacks to reading
         log from worker"""
         executor_name = "CeleryExecutor"
-
         ti = create_task_instance(
             dag_id="dag_for_testing_celery_executor_log_read",
             task_id="task_for_testing_celery_executor_log_read",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
         ti.state = TaskInstanceState.RUNNING
         ti.try_number = 1

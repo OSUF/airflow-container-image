@@ -19,8 +19,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS
-from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_db_serialized_dags
 
 from airflow.models.dag import DAG, DagModel
 from airflow.models.dagrun import DagRun
@@ -35,6 +33,8 @@ from providers.tests.fab.auth_manager.api_endpoints.api_connexion_utils import (
     delete_roles,
     delete_user,
 )
+from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_db_serialized_dags
 
 try:
     from airflow.utils.types import DagRunTriggeredByType, DagRunType
@@ -138,6 +138,7 @@ class TestDagRunEndpoint:
             session.add(dag_instance)
         dag = DAG(dag_id=dag_id, schedule=None, params={"validated_number": Param(1, minimum=1, maximum=10)})
         self.app.dag_bag.bag_dag(dag)
+        self.app.dag_bag.sync_to_db()
         return dag_instance
 
     def _create_test_dag_run(self, state=DagRunState.RUNNING, extra_dag=False, commit=True, idx_start=1):
@@ -152,7 +153,7 @@ class TestDagRunEndpoint:
                 dag_id="TEST_DAG_ID",
                 run_id=f"TEST_DAG_RUN_ID_{i}",
                 run_type=DagRunType.MANUAL,
-                execution_date=timezone.parse(self.default_time) + timedelta(days=i - 1),
+                logical_date=timezone.parse(self.default_time) + timedelta(days=i - 1),
                 start_date=timezone.parse(self.default_time),
                 external_trigger=True,
                 state=state,
@@ -169,7 +170,7 @@ class TestDagRunEndpoint:
                         dag_id=f"TEST_DAG_ID_{i}",
                         run_id=f"TEST_DAG_RUN_ID_{i}",
                         run_type=DagRunType.MANUAL,
-                        execution_date=timezone.parse(self.default_time_2),
+                        logical_date=timezone.parse(self.default_time_2),
                         start_date=timezone.parse(self.default_time),
                         external_trigger=True,
                         state=state,
@@ -202,7 +203,6 @@ class TestGetDagRunBatch(TestDagRunEndpoint):
             "dag_run_id": "TEST_DAG_RUN_ID_1",
             "end_date": None,
             "state": "running",
-            "execution_date": self.default_time,
             "logical_date": self.default_time,
             "external_trigger": True,
             "start_date": self.default_time,
@@ -219,7 +219,6 @@ class TestGetDagRunBatch(TestDagRunEndpoint):
             "dag_run_id": "TEST_DAG_RUN_ID_2",
             "end_date": None,
             "state": "running",
-            "execution_date": self.default_time_2,
             "logical_date": self.default_time_2,
             "external_trigger": True,
             "start_date": self.default_time,
@@ -267,7 +266,7 @@ class TestPostDagRun(TestDagRunEndpoint):
             "api/v1/dags/TEST_DAG_ID/dagRuns",
             json={
                 "dag_run_id": "TEST_DAG_RUN_ID_1",
-                "execution_date": self.default_time,
+                "logical_date": self.default_time,
             },
             environ_overrides={"REMOTE_USER": username},
         )

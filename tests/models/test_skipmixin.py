@@ -31,6 +31,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.utils import timezone
 from airflow.utils.state import State
 from airflow.utils.types import DagRunType
+
 from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
 pytestmark = pytest.mark.db_test
@@ -62,7 +63,7 @@ class TestSkipMixin:
             tasks = [EmptyOperator(task_id="task")]
         dag_run = dag_maker.create_dagrun(
             run_type=DagRunType.MANUAL,
-            execution_date=now,
+            logical_date=now,
             state=State.FAILED,
         )
         SkipMixin().skip(dag_run=dag_run, tasks=tasks)

@@ -28,6 +28,14 @@ core:
       type: string
       example: ~
       default: "{AIRFLOW_HOME}/dags"
+    dag_bundle_storage_path:
+      description: |
+        The folder where Airflow bundles can store files locally (if required).
+        By default, this is ``tempfile.gettempdir()/airflow``. This path must be absolute.
+      version_added: 3.0.0
+      type: string
+      example: "`tempfile.gettempdir()/dag_bundles"
+      default: ~
     hostname_callable:
       description: |
         Hostname by providing a path to a callable, which will resolve the hostname.
@@ -218,15 +226,6 @@ core:
       type: string
       example: ~
       default: "50"
-    task_runner:
-      description: |
-        The class to use for running task instances in a subprocess.
-        Choices include StandardTaskRunner, CgroupTaskRunner or the full import path to the class
-        when using a custom task runner.
-      version_added: ~
-      type: string
-      example: ~
-      default: "StandardTaskRunner"
     default_impersonation:
       description: |
         If set, tasks without a ``run_as_user`` argument will be run with this user
@@ -475,7 +474,7 @@ core:
       version_added: 3.0.0
       type: string
       default: ~
-      example: 'airflow.datasets.manager.AssetManager'
+      example: 'airflow.assets.manager.AssetManager'
     asset_manager_kwargs:
       description: Kwargs to supply to asset manager.
       version_added: 3.0.0
@@ -483,13 +482,6 @@ core:
       sensitive: true
       default: ~
       example: '{"some_param": "some_value"}'
-    strict_asset_uri_validation:
-      description: |
-        Asset URI validation should raise an exception if it is not compliant with AIP-60.
-      default: "True"
-      example: ~
-      version_added: 2.9.2
-      type: boolean
     database_access_isolation:
       description: (experimental) Whether components should use Airflow Internal API for DB connectivity.
       version_added: 2.6.0
@@ -1032,18 +1024,6 @@ logging:
       type: boolean
       example: ~
       default: "False"
-    enable_task_context_logger:
-      description: |
-        If enabled, Airflow may ship messages to task logs from outside the task run context, e.g. from
-        the scheduler, executor, or callback execution context. This can help in circumstances such as
-        when there's something blocking the execution of the task and ordinarily there may be no task
-        logs at all.
-        This is set to ``True`` by default. If you encounter issues with this feature
-        (e.g. scheduler performance issues) it can be disabled.
-      version_added: 2.8.0
-      type: boolean
-      example: ~
-      default: "True"
     color_log_error_keywords:
       description: |
         A comma separated list of keywords related to errors whose presence should display the line in red
@@ -1084,17 +1064,6 @@ metrics:
       example: "\"scheduler,executor,dagrun,pool,triggerer,celery\"
         or \"^scheduler,^executor,heartbeat|timeout\""
       default: ""
-    metrics_consistency_on:
-      description: |
-        Enables metrics consistency across all metrics loggers (ex: timer and timing metrics).
-
-        .. warning::
-
-          It is enabled by default from Airflow 3.
-      version_added: 2.10.0
-      type: string
-      example: ~
-      default: "True"
     statsd_on:
       description: |
         Enables sending metrics to StatsD.
@@ -1303,14 +1272,6 @@ traces:
       type: string
       example: ~
       default: "False"
-    otel_task_log_event:
-      description: |
-        If True, after the task is complete, the full task log messages will be added as the
-        span events, chunked by 64k size. defaults to False.
-      version_added: 2.10.0
-      type: string
-      example: ~
-      default: "False"
 secrets:
   description: ~
   options:
@@ -1377,12 +1338,11 @@ api:
       description: |
         Comma separated list of auth backends to authenticate users of the API. See
         `Security: API
-        <https://airflow.apache.org/docs/apache-airflow/stable/security/api.html>`__ for possible values.
-        ("airflow.api.auth.backend.default" allows all requests for historic reasons)
+        <https://airflow.apache.org/docs/apache-airflow/stable/security/api.html>`__ for possible values
       version_added: 2.3.0
       type: string
       example: ~
-      default: "airflow.api.auth.backend.session"
+      default: "airflow.providers.fab.auth_manager.api.auth.backend.session"
     maximum_page_limit:
       description: |
         Used to set the maximum page limit for API requests. If limit passed as param
@@ -2279,7 +2239,7 @@ scheduler:
     parsing_cleanup_interval:
       description: |
         How often (in seconds) to check for stale DAGs (DAGs which are no longer present in
-        the expected files) which should be deactivated, as well as datasets that are no longer
+        the expected files) which should be deactivated, as well as assets that are no longer
         referenced and should be marked as orphaned.
       version_added: 2.5.0
       type: integer
@@ -2440,15 +2400,6 @@ scheduler:
       type: integer
       default: "20"
       see_also: ":ref:`scheduler:ha:tunables`"
-    schedule_after_task_execution:
-      description: |
-        Should the Task supervisor process perform a "mini scheduler" to attempt to schedule more tasks of the
-        same DAG. Leaving this on will mean tasks in the same DAG execute quicker, but might starve out other
-        dags in some circumstances
-      example: ~
-      version_added: 2.0.0
-      type: boolean
-      default: "True"
     parsing_pre_import_modules:
       description: |
         The scheduler reads dag files to extract the airflow modules that are going to be used,

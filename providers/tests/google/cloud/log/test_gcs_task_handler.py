@@ -23,12 +23,13 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
-from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
 from airflow.providers.google.cloud.log.gcs_task_handler import GCSTaskHandler
 from airflow.utils.state import TaskInstanceState
 from airflow.utils.timezone import datetime
+
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 
 
 @pytest.mark.db_test
@@ -38,7 +39,7 @@ class TestGCSTaskHandler:
         self.ti = ti = create_task_instance(
             dag_id="dag_for_testing_gcs_task_handler",
             task_id="task_for_testing_gcs_task_handler",
-            execution_date=datetime(2020, 1, 1),
+            logical_date=datetime(2020, 1, 1),
             state=TaskInstanceState.RUNNING,
         )
         ti.try_number = 1

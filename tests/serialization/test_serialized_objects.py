@@ -49,7 +49,7 @@ from airflow.models.taskinstance import SimpleTaskInstance, TaskInstance
 from airflow.models.tasklog import LogTemplate
 from airflow.models.xcom_arg import XComArg
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.serialization.enums import DagAttributeTypes as DAT, Encoding
 from airflow.serialization.pydantic.asset import AssetEventPydantic, AssetPydantic
 from airflow.serialization.pydantic.dag import DagModelPydantic, DagTagPydantic
@@ -143,7 +143,7 @@ DAG_RUN = DagRun(
     dag_id="test_dag_id",
     run_id="test_dag_run_id",
     run_type=DagRunType.MANUAL,
-    execution_date=timezone.utcnow(),
+    logical_date=timezone.utcnow(),
     start_date=timezone.utcnow(),
     external_trigger=True,
     state=DagRunState.SUCCESS,
@@ -327,7 +327,7 @@ sample_objects = {
         id=1, filename="test_file", elasticsearch_id="test_id", created_at=datetime.now()
     ),
     DagTagPydantic: DagTag(),
-    AssetPydantic: Asset("uri", {}),
+    AssetPydantic: Asset("uri", extra={}),
     AssetEventPydantic: AssetEvent(),
 }
 
@@ -352,7 +352,7 @@ sample_objects = {
             sample_objects.get(DagRunPydantic),
             DagRunPydantic,
             DAT.DAG_RUN,
-            lambda a, b: equal_time(a.execution_date, b.execution_date)
+            lambda a, b: equal_time(a.logical_date, b.logical_date)
             and equal_time(a.start_date, b.start_date),
         ),
         # Asset is already serialized by non-Pydantic serialization. Is AssetPydantic needed then?
@@ -472,6 +472,7 @@ def test_all_pydantic_models_round_trip():
 @pytest.mark.db_test
 def test_serialized_mapped_operator_unmap(dag_maker):
     from airflow.serialization.serialized_objects import SerializedDAG
+
     from tests_common.test_utils.mock_operators import MockOperator
 
     with dag_maker(dag_id="dag") as dag:

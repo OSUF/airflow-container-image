@@ -26,8 +26,6 @@ import pytest
 import yaml
 from botocore.exceptions import ClientError, NoCredentialsError
 from semver import VersionInfo
-from tests_common import RUNNING_TESTS_AGAINST_AIRFLOW_PACKAGES
-from tests_common.test_utils.config import conf_vars
 
 from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import BaseExecutor
@@ -47,6 +45,9 @@ from airflow.providers.amazon.aws.executors.batch.utils import (
 from airflow.utils.helpers import convert_camel_to_snake
 from airflow.utils.state import State
 from airflow.version import version as airflow_version_str
+
+from tests_common import RUNNING_TESTS_AGAINST_AIRFLOW_PACKAGES
+from tests_common.test_utils.config import conf_vars
 
 airflow_version = VersionInfo(*map(int, airflow_version_str.split(".")[:3]))
 ARN1 = "arn1"
@@ -97,7 +98,7 @@ class TestBatchJobCollection:
     """Tests BatchJobCollection Class"""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def _setup_method(self):
         """
         Create a BatchJobCollection object and add 2 airflow tasks. Populates self.collection,
         self.first/second_task, self.first/second_airflow_key, and self.first/second_airflow_cmd.
@@ -147,7 +148,7 @@ class TestBatchJob:
     """Tests the BatchJob DTO"""
 
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def _setup_method(self):
         self.all_statuses = ["SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING", "SUCCEEDED", "FAILED"]
         self.running = "RUNNING"
         self.success = "SUCCEEDED"
