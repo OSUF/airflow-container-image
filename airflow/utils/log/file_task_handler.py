@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from contextlib import suppress
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urljoin
 
 import pendulum
@@ -400,7 +401,11 @@ class FileTaskHandler(logging.Handler):
             )
         )
         log_pos = len(logs)
-        messages = "".join([f"*** {x}\n" for x in messages_list])
+        # Log message source details are grouped: they are not relevant for most users and can
+        # distract them from finding the root cause of their errors
+        messages = " INFO - ::group::Log message source details\n"
+        messages += "".join([f"*** {x}\n" for x in messages_list])
+        messages += " INFO - ::endgroup::\n"
         end_of_log = ti.try_number != try_number or ti.state not in (
             TaskInstanceState.RUNNING,
             TaskInstanceState.DEFERRED,

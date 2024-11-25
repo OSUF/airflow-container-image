@@ -191,7 +191,7 @@ ALLOWED_MOUNT_OPTIONS = [
 ]
 
 USE_AIRFLOW_MOUNT_SOURCES = [MOUNT_REMOVE, MOUNT_TESTS, MOUNT_PROVIDERS_AND_TESTS]
-ALLOWED_POSTGRES_VERSIONS = ["12", "13", "14", "15", "16", "17"]
+ALLOWED_POSTGRES_VERSIONS = ["13", "14", "15", "16", "17"]
 # Oracle introduced new release model for MySQL
 # - LTS: Long Time Support releases, new release approx every 2 year,
 #  with 5 year premier and 3 year extended support, no new features/removals during current LTS release.
@@ -208,7 +208,7 @@ if MYSQL_INNOVATION_RELEASE:
 ALLOWED_INSTALL_MYSQL_CLIENT_TYPES = ["mariadb", "mysql"]
 
 PIP_VERSION = "24.3.1"
-UV_VERSION = "0.5.1"
+UV_VERSION = "0.5.4"
 
 DEFAULT_UV_HTTP_TIMEOUT = 300
 DEFAULT_WSL2_HTTP_TIMEOUT = 900
@@ -362,7 +362,7 @@ PRODUCTION_IMAGE = False
 # changes from main to the previous branch.
 ALL_PYTHON_MAJOR_MINOR_VERSIONS = ["3.9", "3.10", "3.11", "3.12"]
 CURRENT_PYTHON_MAJOR_MINOR_VERSIONS = ALL_PYTHON_MAJOR_MINOR_VERSIONS
-CURRENT_POSTGRES_VERSIONS = ["12", "13", "14", "15", "16", "17"]
+CURRENT_POSTGRES_VERSIONS = ["13", "14", "15", "16", "17"]
 DEFAULT_POSTGRES_VERSION = CURRENT_POSTGRES_VERSIONS[0]
 USE_MYSQL_INNOVATION_RELEASE = True
 if USE_MYSQL_INNOVATION_RELEASE:
@@ -609,7 +609,7 @@ DEFAULT_EXTRAS = [
 CHICKEN_EGG_PROVIDERS = " ".join(["standard amazon common.sql"])
 
 
-BASE_PROVIDERS_COMPATIBILITY_CHECKS: list[dict[str, str | list[str]]] = [
+PROVIDERS_COMPATIBILITY_TESTS_MATRIX: list[dict[str, str | list[str]]] = [
     {
         "python-version": "3.9",
         "airflow-version": "2.8.4",
@@ -619,13 +619,13 @@ BASE_PROVIDERS_COMPATIBILITY_CHECKS: list[dict[str, str | list[str]]] = [
     {
         "python-version": "3.9",
         "airflow-version": "2.9.3",
-        "remove-providers": "cloudant edge",
+        "remove-providers": "cloudant fab edge",
         "run-tests": "true",
     },
     {
         "python-version": "3.9",
         "airflow-version": "2.10.3",
-        "remove-providers": "cloudant",
+        "remove-providers": "cloudant fab",
         "run-tests": "true",
     },
 ]

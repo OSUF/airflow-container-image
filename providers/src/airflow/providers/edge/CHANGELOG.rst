@@ -27,6 +27,22 @@
 Changelog
 ---------
 
+0.6.1pre0
+.........
+
+Misc
+~~~~
+
+* ``Update jobs or edge workers who have been killed to clean up job table.``
+
+0.6.0pre0
+.........
+
+Misc
+~~~~
+
+* ``Support for FastAPI in Airflow 3 as API backend.``
+
 0.5.5pre0
 .........
 

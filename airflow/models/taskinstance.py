@@ -27,11 +27,12 @@ import operator
 import os
 import signal
 from collections import defaultdict
+from collections.abc import Collection, Generator, Iterable, Mapping
 from contextlib import nullcontext
 from datetime import timedelta
 from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, Any, Callable, Collection, Generator, Iterable, Mapping, Tuple
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import quote
 
 import dill
@@ -73,7 +74,6 @@ from sqlalchemy_utils import UUIDType
 
 from airflow import settings
 from airflow.api_internal.internal_api_call import InternalApiConfig, internal_api_call
-from airflow.assets import Asset, AssetAlias
 from airflow.assets.manager import asset_manager
 from airflow.configuration import conf
 from airflow.exceptions import (
@@ -102,6 +102,7 @@ from airflow.models.taskmap import TaskMap
 from airflow.models.taskreschedule import TaskReschedule
 from airflow.models.xcom import LazyXComSelectSequence, XCom
 from airflow.plugins_manager import integrate_macros_plugins
+from airflow.sdk.definitions.asset import Asset, AssetAlias
 from airflow.sentry import Sentry
 from airflow.settings import task_instance_mutation_hook
 from airflow.stats import Stats
@@ -163,7 +164,7 @@ if TYPE_CHECKING:
     from airflow.models.dag import DAG as SchedulerDAG, DagModel
     from airflow.models.dagrun import DagRun
     from airflow.models.operator import Operator
-    from airflow.sdk import DAG
+    from airflow.sdk.definitions.dag import DAG
     from airflow.serialization.pydantic.asset import AssetEventPydantic
     from airflow.serialization.pydantic.dag import DagModelPydantic
     from airflow.serialization.pydantic.taskinstance import TaskInstancePydantic
@@ -2456,7 +2457,8 @@ class TaskInstance(Base, LoggingMixin):
             # deterministic per task instance
             ti_hash = int(
                 hashlib.sha1(
-                    f"{self.dag_id}#{self.task_id}#{self.logical_date}#{self.try_number}".encode()
+                    f"{self.dag_id}#{self.task_id}#{self.logical_date}#{self.try_number}".encode(),
+                    usedforsecurity=False,
                 ).hexdigest(),
                 16,
             )
@@ -2795,20 +2797,33 @@ class TaskInstance(Base, LoggingMixin):
             session=session,
         )
 
-    def _register_asset_changes(self, *, events: OutletEventAccessors, session: Session) -> None:
+    def _register_asset_changes(
+        self, *, events: OutletEventAccessors, session: Session | None = None
+    ) -> None:
+        if session:
+            TaskInstance._register_asset_changes_int(ti=self, events=events, session=session)
+        else:
+            TaskInstance._register_asset_changes_int(ti=self, events=events)
+
+    @staticmethod
+    @internal_api_call
+    @provide_session
+    def _register_asset_changes_int(
+        ti: TaskInstance, *, events: OutletEventAccessors, session: Session = NEW_SESSION
+    ) -> None:
         if TYPE_CHECKING:
-            assert self.task
+            assert ti.task
 
         # One task only triggers one asset event for each asset with the same extra.
         # This tuple[asset uri, extra] to sets alias names mapping is used to find whether
         # there're assets with same uri but different extra that we need to emit more than one asset events.
         asset_alias_names: dict[tuple[str, frozenset], set[str]] = defaultdict(set)
-        for obj in self.task.outlets or []:
-            self.log.debug("outlet obj %s", obj)
+        for obj in ti.task.outlets or []:
+            ti.log.debug("outlet obj %s", obj)
             # Lineage can have other types of objects besides assets
             if isinstance(obj, Asset):
                 asset_manager.register_asset_change(
-                    task_instance=self,
+                    task_instance=ti,
                     asset=obj,
                     extra=events[obj].extra,
                     session=session,
@@ -2831,18 +2846,18 @@ class TaskInstance(Base, LoggingMixin):
                 (asset_obj.uri, asset_obj)
                 for asset_obj in asset_manager.create_assets(missing_assets, session=session)
             )
-            self.log.warning("Created new assets for alias reference: %s", missing_assets)
+            ti.log.warning("Created new assets for alias reference: %s", missing_assets)
             session.flush()  # Needed because we need the id for fk.
 
         for (uri, extra_items), alias_names in asset_alias_names.items():
             asset_obj = asset_models[uri]
-            self.log.info(
+            ti.log.info(
                 'Creating event for %r through aliases "%s"',
                 asset_obj,
                 ", ".join(alias_names),
             )
             asset_manager.register_asset_change(
-                task_instance=self,
+                task_instance=ti,
                 asset=asset_obj,
                 aliases=[AssetAlias(name=name) for name in alias_names],
                 extra=dict(extra_items),
@@ -2877,8 +2892,9 @@ class TaskInstance(Base, LoggingMixin):
         if not self.next_method:
             self.clear_xcom_data()
 
-        with Stats.timer(f"dag.{self.task.dag_id}.{self.task.task_id}.duration"), Stats.timer(
-            "task.duration", tags=self.stats_tags
+        with (
+            Stats.timer(f"dag.{self.task.dag_id}.{self.task.task_id}.duration"),
+            Stats.timer("task.duration", tags=self.stats_tags),
         ):
             # Set the validated/merged params on the task object.
             self.task.params = context["params"]
@@ -3354,9 +3370,7 @@ class TaskInstance(Base, LoggingMixin):
         Make an XCom available for tasks to pull.
 
         :param key: Key to store the value under.
-        :param value: Value to store. What types are possible depends on whether
-            ``enable_xcom_pickling`` is true or not. If so, this can be any
-            picklable object; only be JSON-serializable may be used otherwise.
+        :param value: Value to store. Only be JSON-serializable may be used otherwise.
         """
         XCom.set(
             key=key,
@@ -3730,7 +3744,7 @@ def _is_further_mapped_inside(operator: Operator, container: TaskGroup) -> bool:
 
 # State of the task instance.
 # Stores string version of the task state.
-TaskInstanceStateType = Tuple[TaskInstanceKey, TaskInstanceState]
+TaskInstanceStateType = tuple[TaskInstanceKey, TaskInstanceState]
 
 
 class SimpleTaskInstance:

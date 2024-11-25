@@ -28,8 +28,9 @@ import attrs
 import structlog
 from pydantic import ConfigDict, TypeAdapter
 
-from airflow.sdk import BaseOperator
-from airflow.sdk.execution_time.comms import StartupDetails, TaskInstance, ToSupervisor, ToTask
+from airflow.sdk.api.datamodels._generated import TaskInstance
+from airflow.sdk.definitions.baseoperator import BaseOperator
+from airflow.sdk.execution_time.comms import StartupDetails, ToSupervisor, ToTask
 
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger as Logger
@@ -72,7 +73,7 @@ def parse(what: StartupDetails) -> RuntimeTaskInstance:
 class CommsDecoder:
     """Handle communication between the task in this process and the supervisor parent process."""
 
-    input: TextIO = sys.stdin
+    input: TextIO
 
     request_socket: FileIO = attrs.field(init=False, default=None)
 
@@ -104,7 +105,16 @@ class CommsDecoder:
         self.request_socket.write(encoded_msg)
 
 
-# This global variable will be used by Connection/Variable classes etc to send requests to
+# This global variable will be used by Connection/Variable/XCom classes, or other parts of the task's execution,
+# to send requests back to the supervisor process.
+#
+# Why it needs to be a global:
+# - Many parts of Airflow's codebase (e.g., connections, variables, and XComs) may rely on making dynamic requests
+#   to the parent process during task execution.
+# - These calls occur in various locations and cannot easily pass the `CommsDecoder` instance through the
+#   deeply nested execution stack.
+# - By defining `SUPERVISOR_COMMS` as a global, it ensures that this communication mechanism is readily
+#   accessible wherever needed during task execution without modifying every layer of the call stack.
 SUPERVISOR_COMMS: CommsDecoder
 
 # State machine!
@@ -163,7 +173,8 @@ def run(ti: RuntimeTaskInstance, log: Logger):
     except SystemExit:
         ...
     except BaseException:
-        ...
+        # TODO: Handle TI handle failure
+        raise
 
 
 def finalize(log: Logger): ...
@@ -173,7 +184,7 @@ def main():
     # TODO: add an exception here, it causes an oof of a stack trace!
 
     global SUPERVISOR_COMMS
-    SUPERVISOR_COMMS = CommsDecoder()
+    SUPERVISOR_COMMS = CommsDecoder(input=sys.stdin)
     try:
         ti, log = startup()
         run(ti, log)

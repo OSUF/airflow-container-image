@@ -20,22 +20,22 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import pickle
-from typing import TYPE_CHECKING, Any, Iterable, cast
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import (
+    JSON,
     Column,
     ForeignKeyConstraint,
     Index,
     Integer,
-    LargeBinary,
     PrimaryKeyConstraint,
     String,
     delete,
     select,
     text,
 )
-from sqlalchemy.dialects.mysql import LONGBLOB
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import Query, reconstructor, relationship
 
@@ -81,7 +81,7 @@ class BaseXCom(TaskInstanceDependencies, LoggingMixin):
     dag_id = Column(String(ID_LEN, **COLLATION_ARGS), nullable=False)
     run_id = Column(String(ID_LEN, **COLLATION_ARGS), nullable=False)
 
-    value = Column(LargeBinary().with_variant(LONGBLOB, "mysql"))
+    value = Column(JSON().with_variant(postgresql.JSONB, "postgresql"))
     timestamp = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
 
     __table_args__ = (
@@ -454,22 +454,12 @@ class BaseXCom(TaskInstanceDependencies, LoggingMixin):
         dag_id: str | None = None,
         run_id: str | None = None,
         map_index: int | None = None,
-    ) -> Any:
-        """Serialize XCom value to str or pickled object."""
-        if conf.getboolean("core", "enable_xcom_pickling"):
-            return pickle.dumps(value)
+    ) -> str:
+        """Serialize XCom value to JSON str."""
         try:
-            return json.dumps(value, cls=XComEncoder).encode("UTF-8")
-        except (ValueError, TypeError) as ex:
-            log.error(
-                "%s."
-                " If you are using pickle instead of JSON for XCom,"
-                " then you need to enable pickle support for XCom"
-                " in your airflow config or make sure to decorate your"
-                " object with attr.",
-                ex,
-            )
-            raise
+            return json.dumps(value, cls=XComEncoder)
+        except (ValueError, TypeError):
+            raise ValueError("XCom value must be JSON serializable")
 
     @staticmethod
     def _deserialize_value(result: XCom, orm: bool) -> Any:
@@ -479,14 +469,8 @@ class BaseXCom(TaskInstanceDependencies, LoggingMixin):
 
         if result.value is None:
             return None
-        if conf.getboolean("core", "enable_xcom_pickling"):
-            try:
-                return pickle.loads(result.value)
-            except pickle.UnpicklingError:
-                return json.loads(result.value.decode("UTF-8"), cls=XComDecoder, object_hook=object_hook)
-        else:
-            # Since xcom_pickling is disabled, we should only try to deserialize with JSON
-            return json.loads(result.value.decode("UTF-8"), cls=XComDecoder, object_hook=object_hook)
+
+        return json.loads(result.value, cls=XComDecoder, object_hook=object_hook)
 
     @staticmethod
     def deserialize_value(result: XCom) -> Any:

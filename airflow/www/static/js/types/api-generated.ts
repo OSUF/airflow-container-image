@@ -736,17 +736,13 @@ export interface paths {
   "/dagStats": {
     get: operations["get_dag_stats"];
   };
-  "/dagSources/{file_token}": {
+  "/dagSources/{dag_id}": {
     /** Get a source code using file token. */
     get: operations["get_dag_source"];
     parameters: {
       path: {
-        /**
-         * The key containing the encrypted path to the file. Encryption and decryption take place only on
-         * the server. This prevents the client from reading an non-DAG file. This also ensures API
-         * extensibility, because the format of encrypted data may change.
-         */
-        file_token: components["parameters"]["FileToken"];
+        /** The DAG ID. */
+        dag_id: components["parameters"]["DAGID"];
       };
     };
   };
@@ -1525,6 +1521,57 @@ export interface components {
      */
     TaskInstanceCollection: {
       task_instances?: components["schemas"]["TaskInstance"][];
+    } & components["schemas"]["CollectionInfo"];
+    TaskInstanceHistory: {
+      task_id?: string;
+      /**
+       * @description Human centric display text for the task.
+       *
+       * *New in version 2.9.0*
+       */
+      task_display_name?: string;
+      dag_id?: string;
+      /**
+       * @description The DagRun ID for this task instance
+       *
+       * *New in version 2.3.0*
+       */
+      dag_run_id?: string;
+      /** Format: datetime */
+      start_date?: string | null;
+      /** Format: datetime */
+      end_date?: string | null;
+      duration?: number | null;
+      state?: components["schemas"]["TaskState"];
+      try_number?: number;
+      map_index?: number;
+      max_tries?: number;
+      hostname?: string;
+      unixname?: string;
+      pool?: string;
+      pool_slots?: number;
+      queue?: string | null;
+      priority_weight?: number | null;
+      /** @description *Changed in version 2.1.1*&#58; Field becomes nullable. */
+      operator?: string | null;
+      /** @description The datetime that the task enter the state QUEUE, also known as queue_at */
+      queued_when?: string | null;
+      pid?: number | null;
+      /**
+       * @description Executor the task is configured to run on or None (which indicates the default executor)
+       *
+       * *New in version 2.10.0*
+       */
+      executor?: string | null;
+      executor_config?: string;
+    };
+    /**
+     * @description Collection of task instances .
+     *
+     * *Changed in version 2.1.0*&#58; 'total_entries' field is added.
+     */
+    TaskInstanceHistoryCollection: {
+      task_instances_history?: components["schemas"]["TaskInstanceHistory"][];
     } & components["schemas"]["CollectionInfo"];
     TaskInstanceReference: {
       /** @description The task ID. */
@@ -2712,6 +2759,8 @@ export interface components {
     UpdateMask: string[];
     /** @description List of field for return. */
     ReturnFields: string[];
+    /** @description The version number. */
+    VersionNumber: number;
   };
   requestBodies: {};
   headers: {};
@@ -4378,7 +4427,7 @@ export interface operations {
       /** Success. */
       200: {
         content: {
-          "application/json": components["schemas"]["TaskInstance"];
+          "application/json": components["schemas"]["TaskInstanceHistory"];
         };
       };
       401: components["responses"]["Unauthenticated"];
@@ -4419,7 +4468,7 @@ export interface operations {
       /** Success. */
       200: {
         content: {
-          "application/json": components["schemas"]["TaskInstanceCollection"];
+          "application/json": components["schemas"]["TaskInstanceHistoryCollection"];
         };
       };
       401: components["responses"]["Unauthenticated"];
@@ -4462,7 +4511,7 @@ export interface operations {
       /** Success. */
       200: {
         content: {
-          "application/json": components["schemas"]["TaskInstanceCollection"];
+          "application/json": components["schemas"]["TaskInstanceHistoryCollection"];
         };
       };
       401: components["responses"]["Unauthenticated"];
@@ -4494,7 +4543,7 @@ export interface operations {
       /** Success. */
       200: {
         content: {
-          "application/json": components["schemas"]["TaskInstance"];
+          "application/json": components["schemas"]["TaskInstanceHistory"];
         };
       };
       401: components["responses"]["Unauthenticated"];
@@ -4898,12 +4947,12 @@ export interface operations {
   get_dag_source: {
     parameters: {
       path: {
-        /**
-         * The key containing the encrypted path to the file. Encryption and decryption take place only on
-         * the server. This prevents the client from reading an non-DAG file. This also ensures API
-         * extensibility, because the format of encrypted data may change.
-         */
-        file_token: components["parameters"]["FileToken"];
+        /** The DAG ID. */
+        dag_id: components["parameters"]["DAGID"];
+      };
+      query: {
+        /** The version number. */
+        version_number?: components["parameters"]["VersionNumber"];
       };
     };
     responses: {
@@ -5295,6 +5344,12 @@ export type TaskInstance = CamelCasedPropertiesDeep<
 >;
 export type TaskInstanceCollection = CamelCasedPropertiesDeep<
   components["schemas"]["TaskInstanceCollection"]
+>;
+export type TaskInstanceHistory = CamelCasedPropertiesDeep<
+  components["schemas"]["TaskInstanceHistory"]
+>;
+export type TaskInstanceHistoryCollection = CamelCasedPropertiesDeep<
+  components["schemas"]["TaskInstanceHistoryCollection"]
 >;
 export type TaskInstanceReference = CamelCasedPropertiesDeep<
   components["schemas"]["TaskInstanceReference"]
@@ -5691,7 +5746,8 @@ export type GetDagStatsVariables = CamelCasedPropertiesDeep<
   operations["get_dag_stats"]["parameters"]["query"]
 >;
 export type GetDagSourceVariables = CamelCasedPropertiesDeep<
-  operations["get_dag_source"]["parameters"]["path"]
+  operations["get_dag_source"]["parameters"]["path"] &
+    operations["get_dag_source"]["parameters"]["query"]
 >;
 export type GetDagWarningsVariables = CamelCasedPropertiesDeep<
   operations["get_dag_warnings"]["parameters"]["query"]

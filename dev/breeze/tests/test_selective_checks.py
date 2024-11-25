@@ -25,9 +25,9 @@ import pytest
 from rich.console import Console
 
 from airflow_breeze.global_constants import (
-    BASE_PROVIDERS_COMPATIBILITY_CHECKS,
     COMMITTERS,
     DEFAULT_PYTHON_MAJOR_MINOR_VERSION,
+    PROVIDERS_COMPATIBILITY_TESTS_MATRIX,
     GithubEvents,
 )
 from airflow_breeze.utils.packages import get_available_packages
@@ -296,7 +296,7 @@ def assert_outputs_are_printed(expected_outputs: dict[str, str], stderr: str):
                     "mypy-docs,mypy-providers,mypy-task-sdk,ts-compile-format-lint-ui,ts-compile-format-lint-www",
                     "upgrade-to-newer-dependencies": "false",
                     "core-test-types-list-as-string": "Always",
-                    "providers-test-types-list-as-string": "Providers[common.compat,standard]",
+                    "providers-test-types-list-as-string": "Providers[common.compat] Providers[standard]",
                     "individual-providers-test-types-list-as-string": "Providers[common.compat] Providers[standard]",
                     "needs-mypy": "true",
                     "mypy-checks": "['mypy-providers']",
@@ -769,7 +769,7 @@ def assert_outputs_are_printed(expected_outputs: dict[str, str], stderr: str):
                 "ts-compile-format-lint-ui,ts-compile-format-lint-www",
                 "upgrade-to-newer-dependencies": "false",
                 "core-test-types-list-as-string": "Always Core Serialization",
-                "providers-test-types-list-as-string": "Providers[common.compat,standard]",
+                "providers-test-types-list-as-string": "Providers[common.compat] Providers[standard]",
                 "needs-mypy": "true",
                 "mypy-checks": "['mypy-providers']",
             },
@@ -794,7 +794,7 @@ def assert_outputs_are_printed(expected_outputs: dict[str, str], stderr: str):
                 "ts-compile-format-lint-ui,ts-compile-format-lint-www",
                 "upgrade-to-newer-dependencies": "false",
                 "core-test-types-list-as-string": "Always Core Serialization",
-                "providers-test-types-list-as-string": "Providers[common.compat,standard]",
+                "providers-test-types-list-as-string": "Providers[common.compat] Providers[standard]",
                 "needs-mypy": "true",
                 "mypy-checks": "['mypy-providers']",
             },
@@ -1029,7 +1029,7 @@ def test_full_test_needed_when_scripts_changes(files: tuple[str, ...], expected_
                     "all-python-versions": "['3.9', '3.10', '3.11', '3.12']",
                     "all-python-versions-list-as-string": "3.9 3.10 3.11 3.12",
                     "mysql-versions": "['8.0', '8.4']",
-                    "postgres-versions": "['12', '13', '14', '15', '16', '17']",
+                    "postgres-versions": "['13', '14', '15', '16', '17']",
                     "python-versions": "['3.9', '3.10', '3.11', '3.12']",
                     "python-versions-list-as-string": "3.9 3.10 3.11 3.12",
                     "kubernetes-versions": "['v1.28.13', 'v1.29.8', 'v1.30.4', 'v1.31.0']",
@@ -1065,7 +1065,7 @@ def test_full_test_needed_when_scripts_changes(files: tuple[str, ...], expected_
                     "all-python-versions-list-as-string": "3.9",
                     "all-versions": "false",
                     "mysql-versions": "['8.0']",
-                    "postgres-versions": "['12']",
+                    "postgres-versions": "['13']",
                     "python-versions": "['3.9']",
                     "python-versions-list-as-string": "3.9",
                     "kubernetes-versions": "['v1.28.13']",
@@ -1101,7 +1101,7 @@ def test_full_test_needed_when_scripts_changes(files: tuple[str, ...], expected_
                     "all-python-versions-list-as-string": "3.9",
                     "all-versions": "false",
                     "mysql-versions": "['8.0']",
-                    "postgres-versions": "['12']",
+                    "postgres-versions": "['13']",
                     "python-versions": "['3.9']",
                     "python-versions-list-as-string": "3.9",
                     "kubernetes-versions": "['v1.28.13']",
@@ -1671,6 +1671,36 @@ def test_expected_output_push(
                 "mypy-checks": "[]",
             },
             id="pre commit ts-compile-format-lint should not be ignored if openapi spec changed.",
+        ),
+        pytest.param(
+            (
+                "airflow/assets/",
+                "airflow/models/assets/",
+                "task_sdk/src/airflow/sdk/definitions/asset/",
+                "airflow/datasets/",
+            ),
+            {
+                "selected-providers-list-as-string": "amazon common.compat common.io common.sql dbt.cloud ftp google mysql openlineage postgres sftp snowflake trino",
+                "all-python-versions": "['3.9']",
+                "all-python-versions-list-as-string": "3.9",
+                "ci-image-build": "true",
+                "prod-image-build": "false",
+                "needs-helm-tests": "false",
+                "run-tests": "true",
+                "skip-providers-tests": "false",
+                "test-groups": "['core', 'providers']",
+                "docs-build": "true",
+                "docs-list-as-string": "apache-airflow amazon common.compat common.io common.sql dbt.cloud ftp google mysql openlineage postgres sftp snowflake trino",
+                "skip-pre-commits": "check-provider-yaml-valid,flynt,identity,lint-helm-chart,mypy-airflow,mypy-dev,mypy-docs,mypy-providers,mypy-task-sdk,"
+                "ts-compile-format-lint-ui,ts-compile-format-lint-www",
+                "run-kubernetes-tests": "false",
+                "upgrade-to-newer-dependencies": "false",
+                "core-test-types-list-as-string": "API Always CLI Core Operators Other Serialization WWW",
+                "providers-test-types-list-as-string": "Providers[amazon] Providers[common.compat,common.io,common.sql,dbt.cloud,ftp,mysql,openlineage,postgres,sftp,snowflake,trino] Providers[google]",
+                "needs-mypy": "false",
+                "mypy-checks": "[]",
+            },
+            id="Trigger openlineage and related providers tests when Assets files changed",
         ),
     ],
 )
@@ -2261,10 +2291,10 @@ def test_has_migrations(files: tuple[str, ...], has_migrations: bool):
         pytest.param(
             (),
             {
-                "providers-compatibility-checks": json.dumps(
+                "providers-compatibility-tests-matrix": json.dumps(
                     [
                         check
-                        for check in BASE_PROVIDERS_COMPATIBILITY_CHECKS
+                        for check in PROVIDERS_COMPATIBILITY_TESTS_MATRIX
                         if check["python-version"] == DEFAULT_PYTHON_MAJOR_MINOR_VERSION
                     ]
                 ),
@@ -2273,7 +2303,7 @@ def test_has_migrations(files: tuple[str, ...], has_migrations: bool):
         ),
         pytest.param(
             ("all versions",),
-            {"providers-compatibility-checks": json.dumps(BASE_PROVIDERS_COMPATIBILITY_CHECKS)},
+            {"providers-compatibility-tests-matrix": json.dumps(PROVIDERS_COMPATIBILITY_TESTS_MATRIX)},
             id="full tests",
         ),
     ],

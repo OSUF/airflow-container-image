@@ -28,6 +28,7 @@ import contextlib
 import copy
 import functools
 import logging
+from collections.abc import Collection, Iterable, Sequence
 from datetime import datetime, timedelta
 from functools import wraps
 from threading import local
@@ -36,10 +37,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Collection,
-    Iterable,
     NoReturn,
-    Sequence,
     TypeVar,
 )
 
@@ -74,14 +72,15 @@ from airflow.models.base import _sentinel
 from airflow.models.mappedoperator import OperatorPartial, validate_mapping_kwargs
 from airflow.models.taskinstance import TaskInstance, clear_task_instances
 from airflow.models.taskmixin import DependencyMixin
-
-# Keeping this file at all is a temp thing as we migrate the repo to the task sdk as the base, but to keep
-# main working and useful for others to develop against we use the TaskSDK here but keep this file around
-from airflow.sdk import DAG, BaseOperator as TaskSDKBaseOperator, EdgeModifier as TaskSDKEdgeModifier
 from airflow.sdk.definitions.baseoperator import (
     BaseOperatorMeta as TaskSDKBaseOperatorMeta,
     get_merged_defaults,
 )
+
+# Keeping this file at all is a temp thing as we migrate the repo to the task sdk as the base, but to keep
+# main working and useful for others to develop against we use the TaskSDK here but keep this file around
+from airflow.sdk.definitions.dag import DAG, BaseOperator as TaskSDKBaseOperator
+from airflow.sdk.definitions.edges import EdgeModifier as TaskSDKEdgeModifier
 from airflow.serialization.enums import DagAttributeTypes
 from airflow.ti_deps.deps.mapped_task_upstream_dep import MappedTaskUpstreamDep
 from airflow.ti_deps.deps.not_in_retry_period_dep import NotInRetryPeriodDep
@@ -115,7 +114,7 @@ if TYPE_CHECKING:
 
 # Todo: AIP-44: Once we get rid of AIP-44 we can remove this. But without this here pydantic fails to resolve
 # types for serialization
-from airflow.utils.task_group import TaskGroup  # noqa: TCH001
+from airflow.utils.task_group import TaskGroup  # noqa: TC001
 
 TaskPreExecuteHook = Callable[[Context], None]
 TaskPostExecuteHook = Callable[[Context, Any], None]

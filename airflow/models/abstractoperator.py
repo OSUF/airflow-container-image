@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import datetime
 import inspect
+from collections.abc import Iterable, Iterator, Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable
 
 import methodtools
 from sqlalchemy import select
@@ -50,7 +51,8 @@ if TYPE_CHECKING:
     from airflow.models.dag import DAG as SchedulerDAG
     from airflow.models.mappedoperator import MappedOperator
     from airflow.models.taskinstance import TaskInstance
-    from airflow.sdk import DAG, BaseOperator
+    from airflow.sdk.definitions.baseoperator import BaseOperator
+    from airflow.sdk.definitions.dag import DAG
     from airflow.sdk.definitions.node import DAGNode
     from airflow.task.priority_strategy import PriorityWeightStrategy
     from airflow.triggers.base import StartTriggerArgs
@@ -460,7 +462,7 @@ class AbstractOperator(Templater, TaskSDKAbstractOperator):
 
         from airflow.models.mappedoperator import MappedOperator
         from airflow.models.taskinstance import TaskInstance
-        from airflow.sdk import BaseOperator
+        from airflow.sdk.definitions.baseoperator import BaseOperator
         from airflow.settings import task_instance_mutation_hook
 
         if not isinstance(self, (BaseOperator, MappedOperator)):

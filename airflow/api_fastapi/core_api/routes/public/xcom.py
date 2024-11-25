@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 import copy
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
-from typing_extensions import Annotated
 
 from airflow.api_fastapi.common.db.common import get_session
 from airflow.api_fastapi.common.router import AirflowRouter
@@ -88,7 +88,7 @@ def get_xcom_entry(
         xcom_stub.value = XCom.deserialize_value(xcom_stub)
         item = xcom_stub
 
-    if stringify or conf.getboolean("core", "enable_xcom_pickling"):
-        return XComResponseString.model_validate(item, from_attributes=True)
+    if stringify:
+        return XComResponseString.model_validate(item)
 
-    return XComResponseNative.model_validate(item, from_attributes=True)
+    return XComResponseNative.model_validate(item)
