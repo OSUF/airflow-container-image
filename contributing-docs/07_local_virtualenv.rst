@@ -84,6 +84,15 @@ You can follow the `installation instructions <https://docs.astral.sh/uv/getting
 ``uv`` on your system. Once you have ``uv`` installed, you can do all the environment preparation tasks using
 ``uv`` commands.
 
+.. note::
+
+  Mac OS has a low ``ulimit`` setting (256) for number of opened file descriptors which does not work well with our
+  workspace when installing it and you can hit ``Too many open files`` error. You should run the
+  ``ulimit -n 2048`` command to increase the limit of file descriptors to 2048 (for example). It's best to add
+  the ``ulimit`` command to your shell profile (``~/.bashrc``, ``~/.zshrc`` or similar) to make sure it's set
+  for all your terminal sessions automatically. Other than small increase in resource usage it has no negative
+  impact on your system.
+
 Installing Python versions
 ..........................
 
@@ -166,9 +175,20 @@ run tests is to use ``pip`` to install airflow dependencies:
 
     pip install -e ".[devel,devel-tests,<OTHER EXTRAS>]" # for example: pip install -e ".[devel,devel-tests,google,postgres]"
 
-This will install Airflow in 'editable' mode - where sources of Airflow are taken directly from the source
-code rather than moved to the installation directory. You need to run this command in the virtualenv you
-want to install Airflow in - and you need to have the virtualenv activated.
+This will install airflow in ``editable`` mode - where sources of
+Airflow are taken directly from ``airflow`` source code.
+
+You need to run this command in the virtualenv you want to install Airflow in and you need to have the virtualenv activated.
+
+   .. code:: bash
+
+       pip install -e ".[devel,devel-tests,<OTHER EXTRAS>]" # for example: pip install -e ".[devel,devel-tests,google,postgres]"
+       pip install -e "./providers/airbyte[devel]"
+
+   This will install:
+
+       * airflow in ``editable`` mode - where sources of Airflow are taken directly from ``airflow`` source code.
+       * airbyte provider in ``editable`` mode - where sources are read from ``providers/airbyte`` folder
 
 Extras (optional dependencies)
 ..............................
@@ -219,99 +239,77 @@ Developing community providers in local virtualenv
 
 While the above installation is good enough to work on Airflow code, in order to develop
 providers, you also need to install them in the virtualenv you work on (after installing
-the extras in airflow, that correspond to the provider you want to develop).
+the extras in airflow, that correspond to the provider you want to develop). This is something
+you need to do manually if not using ``uv sync`` to synchronize the whole Airflow workspace.
 
-If you want to develop google providers, for example you can run the following commands:
+This is a bit repeated information from earlier chapters but it shows quickly how you set it
+up for a single provider. See above for more details.
+
+If you want to develop google provider, for example here is what you need to do:
+
+If you use ``uv`` this is very simple:
+
+``uv sync --extra google``
+
+If you use ``pip`` it is quite a bit mre you can run the following command in the
+venv that you have installed airflow in (also in editable mode):
 
 .. code:: bash
 
     pip install -e ".[devel,devel-tests,google]"
-    pip install -e "./providers"
+    pip install -e "./task_sdk"
+    pip install -e "./providers/google"
 
 The first command installs airflow, it's development dependencies, test dependencies and
-both runtime and development dependencies of the google provider.
+both runtime and development dependencies of the google provider (Note that in the future, when
+dependency groups will be implemented in ``pip`` - April 2025) - it will not be needed to use ``google`` extra
+when installing airflow - currently with ``pip`` it is the only way to install development dependencies
+of the provider and is a bit convoluted.
 
-The second one installs providers source code in development mode, so that modifications
+The second installs ``task_sdk`` project - where APIs for providers are kept.
+
+The third one installs google provider source code in development mode, so that modifications
 to the code are automatically reflected in your installed virtualenv.
 
-
-Local and Remote Debugging in IDE
----------------------------------
-
-One of the great benefits of using the local virtualenv and Breeze is an option to run
-local debugging in your IDE graphical interface.
-
-When you run example DAGs, even if you run them using unit tests within IDE, they are run in a separate
-container. This makes it a little harder to use with IDE built-in debuggers.
-Fortunately, IntelliJ/PyCharm provides an effective remote debugging feature (but only in paid versions).
-See additional details on
-`remote debugging <https://www.jetbrains.com/help/pycharm/remote-debugging-with-product.html>`_.
-
-You can set up your remote debugging session as follows:
-
-.. image:: images/setup_remote_debugging.png
-    :align: center
-    :alt: Setup remote debugging
-
-Note that on macOS, you have to use a real IP address of your host rather than the default
-localhost because on macOS the container runs in a virtual machine with a different IP address.
-
-Make sure to configure source code mapping in the remote debugging configuration to map
-your local sources to the ``/opt/airflow`` location of the sources within the container:
-
-.. image:: images/source_code_mapping_ide.png
-    :align: center
-    :alt: Source code mapping
-
+You need to separately install each provider you want to develop in the same virtualenv where you
+have installed Airflow.
 
 Developing Providers
 --------------------
 
-In Airflow 2.0 we introduced split of Apache Airflow into separate packages - there is one main
-apache-airflow package with core of Airflow and 70+ packages for all providers (external services
+In Airflow 2.0 we introduced split of Apache Airflow into separate distributions - there is one main
+apache-airflow package with core of Airflow and 90+ distributions for all providers (external services
 and software Airflow can communicate with).
 
-When you install airflow from sources using editable install, you can develop together both - main version
-of Airflow and providers, which is pretty convenient, because you can use the same environment for both.
+In Airflow 3.0 we moved each provider to a separate sub-folder in "providers" directory - and each of those
+providers is a separate distribution with its own ``pyproject.toml`` file. The ``uv workspace`` feature allows
+to install all the distributions together and work together on all of them but you also can do it manually
+with ``pip``.
 
+When you install airflow from sources using editable install you only install airflow now, but as described
+in the previous chapter, you can develop together both - main version of Airflow and providers of your choice,
+which is pretty convenient, because you can use the same environment for both.
 
-Running ``pip install -e .`` will install Airflow in editable mode, but all provider code will also be
-available in the same environment. However, most provider need some additional dependencies.
+Running ``pip install -e .`` will install Airflow in editable mode, but all provider code is elsewhere (
+in ``providers/PROVIDER`` folder, Also most provider need some additional dependencies.
 
-You can install the dependencies of the provider you want to develop by installing airflow in editable
-mode with ``provider id`` as extra (with ``-`` instead of ``.``) . You can see the list of provider's extras in the
-`extras reference <../docs/apache-airflow/extra-packages-ref.rst>`_.
+You can install the dependencies of the provider you want to develop by installing the provider distribution
+in editable mode.
 
-For example, if you want to develop Google provider, you can install it with:
-
-.. code:: bash
-
-    pip install -e ".[devel,google]"
-
-In case of a provider has name compose of several segments, you can use ``-`` to separate them. You can also
-install multiple extra dependencies at a time:
-
-.. code:: bash
-
-    pip install -e ".[devel,apache-beam,dbt-cloud]"
-
-The dependencies for providers are configured in ``airflow/providers/PROVIDERS_FOLDER/provider.yaml`` file -
+The dependencies for providers are configured in ``providers/PROVIDER/pyproject.toml`` files -
 separately for each provider. You can find there two types of ``dependencies`` - production runtime
-dependencies, and sometimes ``devel-dependencies`` which are needed to run tests. While ``provider.yaml``
-file is the single source of truth for the dependencies, eventually they need to find its way to Airflow`s
-``pyproject.toml``. This is done by running:
+dependencies, and sometimes ``development dependencies`` (in ``dev`` dependency group) which are needed
+to run tests and are installed automatically when you install environment with ``uv-sync``.
 
-.. code:: bash
+If you want to add another dependency to a provider, you should add it to corresponding ``pyproject.toml``,
+add the files to your commit with ``git add`` and run ``pre-commit run`` to update generated dependencies.
+Note that in the future we will remove that step.
 
-    pre-commit run update-providers-dependencies --all-files
+For ``uv`` it's simple, you need to run ``uv sync`` in main airflow directory after you modified
+``pyproject.toml`` file in the provider.
 
-This will update ``pyproject.toml`` with the dependencies from ``provider.yaml`` files and from there
-it will be used automatically when you install Airflow in editable mode.
-
-If you want to add another dependency to a provider, you should add it to corresponding ``provider.yaml``,
-run the command above and commit the changes to ``pyproject.toml``. Then running
-``pip install -e .[devel,PROVIDER_EXTRA]`` will install the new dependencies. Tools like ``hatch`` can also
-install the dependencies automatically when you create or switch to a development environment.
+For ``pip`` you should run ``pip install -e .[devel,PROVIDER_EXTRA]`` will install the new dependencies -
+including devel dependencies of the provider..
 
 
 Installing "golden" version of dependencies
@@ -338,6 +336,12 @@ Or with ``uv``:
     uv pip install -e ".[devel,google]" \
       --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-main/constraints-source-providers-3.9.txt"
 
+In the future we will utilise ``uv.lock`` to manage dependencies and constraints, but for the moment we do not
+commit ``uv.lock`` file to airflow repository because we need to figure out automation of updating the ``uv.lock``
+very frequently (few times a day sometimes). With Airflow's 700+ dependencies it's all but guaranteed that we
+will have 3-4 changes a day and currently automated constraints generation mechanism in ``canary`` build keeps
+constraints updated, but for ASF policy reasons we cannot update ``uv.lock`` in the same way - but work is in
+progress to fix it.
 
 Make sure to use latest main for such installation, those constraints are "development constraints" and they
 are refreshed several times a day to make sure they are up to date with the latest changes in the main branch.

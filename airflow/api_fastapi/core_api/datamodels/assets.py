@@ -21,11 +21,11 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from airflow.api_fastapi.core_api.base import BaseModel
-from airflow.utils.log.secrets_masker import redact
+from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
+from airflow.sdk.execution_time.secrets_masker import redact
 
 
-class DagScheduleAssetReference(BaseModel):
+class DagScheduleAssetReference(StrictBaseModel):
     """DAG schedule reference serializer for assets."""
 
     dag_id: str
@@ -33,21 +33,13 @@ class DagScheduleAssetReference(BaseModel):
     updated_at: datetime
 
 
-class TaskOutletAssetReference(BaseModel):
+class TaskOutletAssetReference(StrictBaseModel):
     """Task outlet reference serializer for assets."""
 
     dag_id: str
     task_id: str
     created_at: datetime
     updated_at: datetime
-
-
-class AssetAliasSchema(BaseModel):
-    """Asset alias serializer for assets."""
-
-    id: int
-    name: str
-    group: str
 
 
 class AssetResponse(BaseModel):
@@ -62,7 +54,7 @@ class AssetResponse(BaseModel):
     updated_at: datetime
     consuming_dags: list[DagScheduleAssetReference]
     producing_tasks: list[TaskOutletAssetReference]
-    aliases: list[AssetAliasSchema]
+    aliases: list[AssetAliasResponse]
 
     @field_validator("extra", mode="after")
     @classmethod
@@ -77,17 +69,32 @@ class AssetCollectionResponse(BaseModel):
     total_entries: int
 
 
-class DagRunAssetReference(BaseModel):
+class AssetAliasResponse(BaseModel):
+    """Asset alias serializer for responses."""
+
+    id: int
+    name: str
+    group: str
+
+
+class AssetAliasCollectionResponse(BaseModel):
+    """Asset alias collection response."""
+
+    asset_aliases: list[AssetAliasResponse]
+    total_entries: int
+
+
+class DagRunAssetReference(StrictBaseModel):
     """DAGRun serializer for asset responses."""
 
     run_id: str
     dag_id: str
-    execution_date: datetime = Field(alias="logical_date")
+    logical_date: datetime | None
     start_date: datetime
     end_date: datetime | None
     state: str
-    data_interval_start: datetime
-    data_interval_end: datetime
+    data_interval_start: datetime | None
+    data_interval_end: datetime | None
 
 
 class AssetEventResponse(BaseModel):
@@ -95,7 +102,9 @@ class AssetEventResponse(BaseModel):
 
     id: int
     asset_id: int
-    uri: str
+    uri: str | None = Field(alias="uri", default=None)
+    name: str | None = Field(alias="name", default=None)
+    group: str | None = Field(alias="group", default=None)
     extra: dict | None = None
     source_task_id: str | None = None
     source_dag_id: str | None = None
@@ -120,8 +129,8 @@ class AssetEventCollectionResponse(BaseModel):
 class QueuedEventResponse(BaseModel):
     """Queued Event serializer for responses.."""
 
-    uri: str
     dag_id: str
+    asset_id: int
     created_at: datetime
 
 
@@ -132,10 +141,10 @@ class QueuedEventCollectionResponse(BaseModel):
     total_entries: int
 
 
-class CreateAssetEventsBody(BaseModel):
+class CreateAssetEventsBody(StrictBaseModel):
     """Create asset events request."""
 
-    uri: str
+    asset_id: int
     extra: dict = Field(default_factory=dict)
 
     @field_validator("extra", mode="after")

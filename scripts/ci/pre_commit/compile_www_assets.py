@@ -52,23 +52,45 @@ if __name__ not in ("__main__", "__mp_main__"):
         f"To run this script, run the ./{__file__} command"
     )
 
-if __name__ == "__main__":
-    www_directory = AIRFLOW_SOURCES_PATH / "airflow" / "www"
+INTERNAL_SERVER_ERROR = "500 Internal Server Error"
+
+
+def compile_assets(www_directory: Path, www_hash_file_name: str):
     node_modules_directory = www_directory / "node_modules"
     dist_directory = www_directory / "static" / "dist"
-    WWW_HASH_FILE.parent.mkdir(exist_ok=True, parents=True)
+    www_hash_file = AIRFLOW_SOURCES_PATH / ".build" / "www" / www_hash_file_name
+    www_hash_file.parent.mkdir(exist_ok=True, parents=True)
     if node_modules_directory.exists() and dist_directory.exists():
-        old_hash = WWW_HASH_FILE.read_text() if WWW_HASH_FILE.exists() else ""
+        old_hash = www_hash_file.read_text() if www_hash_file.exists() else ""
         new_hash = get_directory_hash(www_directory, skip_path_regexp=r".*node_modules.*")
         if new_hash == old_hash:
-            print("The WWW directory has not changed! Skip regeneration.")
-            sys.exit(0)
+            print(f"The '{www_directory}' directory has not changed! Skip regeneration.")
+            return
     else:
         shutil.rmtree(node_modules_directory, ignore_errors=True)
         shutil.rmtree(dist_directory, ignore_errors=True)
     env = os.environ.copy()
     env["FORCE_COLOR"] = "true"
-    subprocess.check_call(["yarn", "install", "--frozen-lockfile"], cwd=os.fspath(www_directory))
+    for try_num in range(3):
+        print(f"### Trying to install yarn dependencies: attempt: {try_num + 1} ###")
+        result = subprocess.run(
+            ["yarn", "install", "--frozen-lockfile"],
+            cwd=os.fspath(www_directory),
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            break
+        if try_num == 2 or INTERNAL_SERVER_ERROR not in result.stderr + result.stdout:
+            print(result.stdout + "\n" + result.stderr)
+            sys.exit(result.returncode)
     subprocess.check_call(["yarn", "run", "build"], cwd=os.fspath(www_directory), env=env)
     new_hash = get_directory_hash(www_directory, skip_path_regexp=r".*node_modules.*")
-    WWW_HASH_FILE.write_text(new_hash)
+    www_hash_file.write_text(new_hash)
+
+
+if __name__ == "__main__":
+    # Compile assets for main
+    main_www_directory = AIRFLOW_SOURCES_PATH / "airflow" / "www"
+    compile_assets(main_www_directory, "hash.txt")

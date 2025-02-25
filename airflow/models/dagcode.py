@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
     from sqlalchemy.sql import Select
 
-    from airflow.models.dag import DAG
     from airflow.models.dag_version import DagVersion
 
 log = logging.getLogger(__name__)
@@ -59,6 +58,7 @@ class DagCode(Base):
     dag_id = Column(String(ID_LEN), nullable=False)
     fileloc = Column(String(2000), nullable=False)
     # The max length of fileloc exceeds the limit of indexing.
+    created_at = Column(UtcDateTime, nullable=False, default=timezone.utcnow)
     last_updated = Column(UtcDateTime, nullable=False, default=timezone.utcnow, onupdate=timezone.utcnow)
     source_code = Column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=False)
     source_code_hash = Column(String(32), nullable=False)
@@ -170,18 +170,19 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def update_source_code(cls, dag: DAG, session: Session = NEW_SESSION) -> None:
+    def update_source_code(cls, dag_id: str, fileloc: str, session: Session = NEW_SESSION) -> None:
         """
         Check if the source code of the DAG has changed and update it if needed.
 
-        :param dag: The DAG object.
+        :param dag_id: Dag ID
+        :param fileloc: The path of code file to read the code from
         :param session: The database session.
         :return: None
         """
-        latest_dagcode = cls.get_latest_dagcode(dag.dag_id, session)
+        latest_dagcode = cls.get_latest_dagcode(dag_id, session)
         if not latest_dagcode:
             return
-        new_source_code = cls.get_code_from_file(dag.fileloc)
+        new_source_code = cls.get_code_from_file(fileloc)
         new_source_code_hash = cls.dag_source_hash(new_source_code)
         if new_source_code_hash != latest_dagcode.source_code_hash:
             latest_dagcode.source_code = new_source_code

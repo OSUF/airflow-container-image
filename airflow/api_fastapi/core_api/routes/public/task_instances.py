@@ -20,6 +20,8 @@ from __future__ import annotations
 from typing import Annotated, Literal, cast
 
 from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.orm import joinedload
@@ -27,25 +29,23 @@ from sqlalchemy.sql.selectable import Select
 
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
-    DagIdsFilter,
-    DagRunIdsFilter,
+    FilterOptionEnum,
+    FilterParam,
     LimitFilter,
     OffsetFilter,
     QueryLimit,
     QueryOffset,
+    QueryTIDagVersionFilter,
     QueryTIExecutorFilter,
     QueryTIPoolFilter,
     QueryTIQueueFilter,
     QueryTIStateFilter,
+    QueryTITaskDisplayNamePatternSearch,
     Range,
     RangeFilter,
     SortParam,
-    TaskIdsFilter,
-    TIExecutorFilter,
-    TIPoolFilter,
-    TIQueueFilter,
-    TIStateFilter,
     datetime_range_filter_factory,
+    filter_param_factory,
     float_range_filter_factory,
 )
 from airflow.api_fastapi.common.router import AirflowRouter
@@ -56,15 +56,13 @@ from airflow.api_fastapi.core_api.datamodels.task_instances import (
     TaskInstanceCollectionResponse,
     TaskInstanceHistoryCollectionResponse,
     TaskInstanceHistoryResponse,
-    TaskInstanceReferenceCollectionResponse,
-    TaskInstanceReferenceResponse,
     TaskInstanceResponse,
     TaskInstancesBatchBody,
 )
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.exceptions import TaskNotFound
-from airflow.jobs.scheduler_job_runner import DR
 from airflow.models import Base, DagRun
+from airflow.models.dag import DAG
 from airflow.models.taskinstance import TaskInstance as TI, clear_task_instances
 from airflow.models.taskinstancehistory import TaskInstanceHistory as TIH
 from airflow.ti_deps.dep_context import DepContext
@@ -89,6 +87,7 @@ def get_task_instance(
         .where(TI.dag_id == dag_id, TI.run_id == dag_run_id, TI.task_id == task_id)
         .join(TI.dag_run)
         .options(joinedload(TI.rendered_task_instance_fields))
+        .options(joinedload(TI.dag_version))
     )
     task_instance = session.scalar(query)
 
@@ -114,6 +113,7 @@ def get_mapped_task_instances(
     dag_run_id: str,
     task_id: str,
     request: Request,
+    run_after_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("run_after", TI))],
     logical_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("logical_date", TI))],
     start_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("start_date", TI))],
     end_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("end_date", TI))],
@@ -123,14 +123,34 @@ def get_mapped_task_instances(
     pool: QueryTIPoolFilter,
     queue: QueryTIQueueFilter,
     executor: QueryTIExecutorFilter,
+    version_number: QueryTIDagVersionFilter,
     limit: QueryLimit,
     offset: QueryOffset,
     order_by: Annotated[
         SortParam,
         Depends(
             SortParam(
-                ["id", "state", "duration", "start_date", "end_date", "map_index", "rendered_map_index"],
+                [
+                    "id",
+                    "state",
+                    "duration",
+                    "start_date",
+                    "end_date",
+                    "map_index",
+                    "try_number",
+                    "logical_date",
+                    "run_after",
+                    "data_interval_start",
+                    "data_interval_end",
+                    "rendered_map_index",
+                ],
                 TI,
+                to_replace={
+                    "run_after": DagRun.run_after,
+                    "logical_date": DagRun.logical_date,
+                    "data_interval_start": DagRun.data_interval_start,
+                    "data_interval_end": DagRun.data_interval_end,
+                },
             ).dynamic_depends(default="map_index")
         ),
     ],
@@ -141,6 +161,7 @@ def get_mapped_task_instances(
         select(TI)
         .where(TI.dag_id == dag_id, TI.run_id == dag_run_id, TI.task_id == task_id, TI.map_index >= 0)
         .join(TI.dag_run)
+        .options(joinedload(TI.dag_version))
     )
     # 0 can mean a mapped TI that expanded to an empty list, so it is not an automatic 404
     unfiltered_total_count = get_query_count(query, session=session)
@@ -161,6 +182,7 @@ def get_mapped_task_instances(
     task_instance_select, total_entries = paginated_select(
         statement=query,
         filters=[
+            run_after_range,
             logical_date_range,
             start_date_range,
             end_date_range,
@@ -170,6 +192,7 @@ def get_mapped_task_instances(
             pool,
             queue,
             executor,
+            version_number,
         ],
         order_by=order_by,
         offset=offset,
@@ -252,11 +275,15 @@ def get_task_instance_tries(
     """Get list of task instances history."""
 
     def _query(orm_object: Base) -> Select:
-        query = select(orm_object).where(
-            orm_object.dag_id == dag_id,
-            orm_object.run_id == dag_run_id,
-            orm_object.task_id == task_id,
-            orm_object.map_index == map_index,
+        query = (
+            select(orm_object)
+            .where(
+                orm_object.dag_id == dag_id,
+                orm_object.run_id == dag_run_id,
+                orm_object.task_id == task_id,
+                orm_object.map_index == map_index,
+            )
+            .options(joinedload(orm_object.dag_version))
         )
         return query
 
@@ -271,7 +298,6 @@ def get_task_instance_tries(
             status.HTTP_404_NOT_FOUND,
             f"The Task Instance with dag_id: `{dag_id}`, run_id: `{dag_run_id}`, task_id: `{task_id}` and map_index: `{map_index}` was not found",
         )
-
     return TaskInstanceHistoryCollectionResponse(
         task_instances=cast(list[TaskInstanceHistoryResponse], task_instances),
         total_entries=len(task_instances),
@@ -315,6 +341,7 @@ def get_mapped_task_instance(
         .where(TI.dag_id == dag_id, TI.run_id == dag_run_id, TI.task_id == task_id, TI.map_index == map_index)
         .join(TI.dag_run)
         .options(joinedload(TI.rendered_task_instance_fields))
+        .options(joinedload(TI.dag_version))
     )
     task_instance = session.scalar(query)
 
@@ -335,23 +362,46 @@ def get_task_instances(
     dag_id: str,
     dag_run_id: str,
     request: Request,
-    logical_date: Annotated[RangeFilter, Depends(datetime_range_filter_factory("logical_date", TI))],
+    task_id: Annotated[FilterParam[str | None], Depends(filter_param_factory(TI.task_id, str | None))],
+    run_after_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("run_after", TI))],
+    logical_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("logical_date", TI))],
     start_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("start_date", TI))],
     end_date_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("end_date", TI))],
     update_at_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("updated_at", TI))],
     duration_range: Annotated[RangeFilter, Depends(float_range_filter_factory("duration", TI))],
+    task_display_name_pattern: QueryTITaskDisplayNamePatternSearch,
     state: QueryTIStateFilter,
     pool: QueryTIPoolFilter,
     queue: QueryTIQueueFilter,
     executor: QueryTIExecutorFilter,
+    version_number: QueryTIDagVersionFilter,
     limit: QueryLimit,
     offset: QueryOffset,
     order_by: Annotated[
         SortParam,
         Depends(
             SortParam(
-                ["id", "state", "duration", "start_date", "end_date", "map_index"],
+                [
+                    "id",
+                    "state",
+                    "duration",
+                    "start_date",
+                    "end_date",
+                    "map_index",
+                    "try_number",
+                    "logical_date",
+                    "run_after",
+                    "data_interval_start",
+                    "data_interval_end",
+                    "rendered_map_index",
+                ],
                 TI,
+                to_replace={
+                    "logical_date": DagRun.logical_date,
+                    "run_after": DagRun.run_after,
+                    "data_interval_start": DagRun.data_interval_start,
+                    "data_interval_end": DagRun.data_interval_end,
+                },
             ).dynamic_depends(default="map_index")
         ),
     ],
@@ -363,7 +413,7 @@ def get_task_instances(
     This endpoint allows specifying `~` as the dag_id, dag_run_id to retrieve Task Instances for all DAGs
     and DAG runs.
     """
-    query = select(TI).join(TI.dag_run)
+    query = select(TI).join(TI.dag_run).outerjoin(TI.dag_version).options(joinedload(TI.dag_version))
 
     if dag_id != "~":
         dag = request.app.state.dag_bag.get_dag(dag_id)
@@ -383,7 +433,8 @@ def get_task_instances(
     task_instance_select, total_entries = paginated_select(
         statement=query,
         filters=[
-            logical_date,
+            run_after_range,
+            logical_date_range,
             start_date_range,
             end_date_range,
             update_at_range,
@@ -392,12 +443,16 @@ def get_task_instances(
             pool,
             queue,
             executor,
+            task_id,
+            task_display_name_pattern,
+            version_number,
         ],
         order_by=order_by,
         offset=offset,
         limit=limit,
         session=session,
     )
+
     task_instances = session.scalars(task_instance_select)
     return TaskInstanceCollectionResponse(
         task_instances=task_instances,
@@ -416,9 +471,13 @@ def get_task_instances_batch(
     session: SessionDep,
 ) -> TaskInstanceCollectionResponse:
     """Get list of task instances."""
-    dag_ids = DagIdsFilter(TI, body.dag_ids)
-    dag_run_ids = DagRunIdsFilter(TI, body.dag_run_ids)
-    task_ids = TaskIdsFilter(TI, body.task_ids)
+    dag_ids = FilterParam(TI.dag_id, body.dag_ids, FilterOptionEnum.IN)
+    dag_run_ids = FilterParam(TI.run_id, body.dag_run_ids, FilterOptionEnum.IN)
+    task_ids = FilterParam(TI.task_id, body.task_ids, FilterOptionEnum.IN)
+    run_after = RangeFilter(
+        Range(lower_bound=body.run_after_gte, upper_bound=body.run_after_lte),
+        attribute=TI.run_after,
+    )
     logical_date = RangeFilter(
         Range(lower_bound=body.logical_date_gte, upper_bound=body.logical_date_lte),
         attribute=TI.logical_date,
@@ -435,10 +494,10 @@ def get_task_instances_batch(
         Range(lower_bound=body.duration_gte, upper_bound=body.duration_lte),
         attribute=TI.duration,
     )
-    state = TIStateFilter(body.state)
-    pool = TIPoolFilter(body.pool)
-    queue = TIQueueFilter(body.queue)
-    executor = TIExecutorFilter(body.executor)
+    state = FilterParam(TI.state, body.state, FilterOptionEnum.ANY_EQUAL)
+    pool = FilterParam(TI.pool, body.pool, FilterOptionEnum.ANY_EQUAL)
+    queue = FilterParam(TI.queue, body.queue, FilterOptionEnum.ANY_EQUAL)
+    executor = FilterParam(TI.executor, body.executor, FilterOptionEnum.ANY_EQUAL)
 
     offset = OffsetFilter(body.page_offset)
     limit = LimitFilter(body.page_limit)
@@ -455,6 +514,7 @@ def get_task_instances_batch(
             dag_ids,
             dag_run_ids,
             task_ids,
+            run_after,
             logical_date,
             start_date,
             end_date,
@@ -547,7 +607,7 @@ def post_clear_task_instances(
     request: Request,
     body: ClearTaskInstancesBody,
     session: SessionDep,
-) -> TaskInstanceReferenceCollectionResponse:
+) -> TaskInstanceCollectionResponse:
     """Clear task instances."""
     dag = request.app.state.dag_bag.get_dag(dag_id)
     if not dag:
@@ -564,12 +624,20 @@ def post_clear_task_instances(
     upstream = body.include_upstream
 
     if dag_run_id is not None:
-        dag_run: DR | None = session.scalar(select(DR).where(DR.dag_id == dag_id, DR.run_id == dag_run_id))
+        dag_run: DagRun | None = session.scalar(
+            select(DagRun).where(DagRun.dag_id == dag_id, DagRun.run_id == dag_run_id)
+        )
         if dag_run is None:
             error_message = f"Dag Run id {dag_run_id} not found in dag {dag_id}"
             raise HTTPException(status.HTTP_404_NOT_FOUND, error_message)
-        body.start_date = dag_run.logical_date
-        body.end_date = dag_run.logical_date
+
+        if past or future:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Cannot use include_past or include_future when dag_run_id is provided because logical_date is not applicable.",
+            )
+        body.start_date = dag_run.logical_date if dag_run.logical_date is not None else None
+        body.end_date = dag_run.logical_date if dag_run.logical_date is not None else None
 
     if past:
         body.start_date = None
@@ -592,8 +660,10 @@ def post_clear_task_instances(
 
     task_instances = dag.clear(
         dry_run=True,
+        run_id=None if past or future else dag_run_id,
         task_ids=task_ids,
         dag_bag=request.app.state.dag_bag,
+        session=session,
         **body.model_dump(
             include={
                 "start_date",
@@ -612,27 +682,13 @@ def post_clear_task_instances(
             DagRunState.QUEUED if reset_dag_runs else False,
         )
 
-    return TaskInstanceReferenceCollectionResponse(
-        task_instances=[
-            TaskInstanceReferenceResponse.model_validate(
-                ti,
-                from_attributes=True,
-            )
-            for ti in task_instances
-        ],
+    return TaskInstanceCollectionResponse(
+        task_instances=task_instances,
         total_entries=len(task_instances),
     )
 
 
-@task_instances_router.patch(
-    task_instances_prefix + "/{task_id}",
-    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST]),
-)
-@task_instances_router.patch(
-    task_instances_prefix + "/{task_id}/{map_index}",
-    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST]),
-)
-def patch_task_instance(
+def _patch_ti_validate_request(
     dag_id: str,
     dag_run_id: str,
     task_id: str,
@@ -641,8 +697,7 @@ def patch_task_instance(
     session: SessionDep,
     map_index: int = -1,
     update_mask: list[str] | None = Query(None),
-) -> TaskInstanceResponse:
-    """Update the state of a task instance."""
+) -> tuple[DAG, TI, dict]:
     dag = request.app.state.dag_bag.get_dag(dag_id)
     if not dag:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"DAG {dag_id} not found")
@@ -676,26 +731,122 @@ def patch_task_instance(
     fields_to_update = body.model_fields_set
     if update_mask:
         fields_to_update = fields_to_update.intersection(update_mask)
+    else:
+        try:
+            PatchTaskInstanceBody.model_validate(body)
+        except ValidationError as e:
+            raise RequestValidationError(errors=e.errors())
 
-    for field in fields_to_update:
-        if field == "new_state":
-            if not body.dry_run:
-                tis: list[TI] = dag.set_task_instance_state(
-                    task_id=task_id,
-                    run_id=dag_run_id,
-                    map_indexes=[map_index],
-                    state=body.new_state,
-                    upstream=body.include_upstream,
-                    downstream=body.include_downstream,
-                    future=body.include_future,
-                    past=body.include_past,
-                    commit=True,
-                    session=session,
+    return dag, ti, body.model_dump(include=fields_to_update, by_alias=True)
+
+
+@task_instances_router.patch(
+    task_instances_prefix + "/{task_id}/dry_run",
+    responses=create_openapi_http_exception_doc(
+        [status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST],
+    ),
+)
+@task_instances_router.patch(
+    task_instances_prefix + "/{task_id}/{map_index}/dry_run",
+    responses=create_openapi_http_exception_doc(
+        [status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST],
+    ),
+)
+def patch_task_instance_dry_run(
+    dag_id: str,
+    dag_run_id: str,
+    task_id: str,
+    request: Request,
+    body: PatchTaskInstanceBody,
+    session: SessionDep,
+    map_index: int = -1,
+    update_mask: list[str] | None = Query(None),
+) -> TaskInstanceCollectionResponse:
+    """Update a task instance dry_run mode."""
+    dag, ti, data = _patch_ti_validate_request(
+        dag_id, dag_run_id, task_id, request, body, session, map_index, update_mask
+    )
+
+    tis: list[TI] = []
+
+    if data.get("new_state"):
+        tis = (
+            dag.set_task_instance_state(
+                task_id=task_id,
+                run_id=dag_run_id,
+                map_indexes=[map_index],
+                state=data["new_state"],
+                upstream=body.include_upstream,
+                downstream=body.include_downstream,
+                future=body.include_future,
+                past=body.include_past,
+                commit=False,
+                session=session,
+            )
+            or []
+        )
+
+    elif "note" in data:
+        tis = [ti]
+
+    return TaskInstanceCollectionResponse(
+        task_instances=[
+            TaskInstanceResponse.model_validate(
+                ti,
+            )
+            for ti in tis
+        ],
+        total_entries=len(tis),
+    )
+
+
+@task_instances_router.patch(
+    task_instances_prefix + "/{task_id}",
+    responses=create_openapi_http_exception_doc(
+        [status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST, status.HTTP_409_CONFLICT],
+    ),
+)
+@task_instances_router.patch(
+    task_instances_prefix + "/{task_id}/{map_index}",
+    responses=create_openapi_http_exception_doc(
+        [status.HTTP_404_NOT_FOUND, status.HTTP_400_BAD_REQUEST, status.HTTP_409_CONFLICT],
+    ),
+)
+def patch_task_instance(
+    dag_id: str,
+    dag_run_id: str,
+    task_id: str,
+    request: Request,
+    body: PatchTaskInstanceBody,
+    session: SessionDep,
+    map_index: int = -1,
+    update_mask: list[str] | None = Query(None),
+) -> TaskInstanceResponse:
+    """Update a task instance."""
+    dag, ti, data = _patch_ti_validate_request(
+        dag_id, dag_run_id, task_id, request, body, session, map_index, update_mask
+    )
+
+    for key, _ in data.items():
+        if key == "new_state":
+            tis: list[TI] = dag.set_task_instance_state(
+                task_id=task_id,
+                run_id=dag_run_id,
+                map_indexes=[map_index],
+                state=data["new_state"],
+                upstream=body.include_upstream,
+                downstream=body.include_downstream,
+                future=body.include_future,
+                past=body.include_past,
+                commit=True,
+                session=session,
+            )
+            if not tis:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, f"Task id {task_id} is already in {data['new_state']} state"
                 )
-                if not ti:
-                    raise HTTPException(status.HTTP_404_NOT_FOUND, err_msg_404)
-                ti = tis[0] if isinstance(tis, list) else tis
-        elif field == "note":
+            ti = tis[0] if isinstance(tis, list) else tis
+        elif key == "note":
             if update_mask or body.note is not None:
                 # @TODO: replace None passed for user_id with actual user id when
                 # permissions and auth is in place.
@@ -706,4 +857,4 @@ def patch_task_instance(
                     ti.task_instance_note.user_id = None
                 session.commit()
 
-    return TaskInstanceResponse.model_validate(ti, from_attributes=True)
+    return TaskInstanceResponse.model_validate(ti)

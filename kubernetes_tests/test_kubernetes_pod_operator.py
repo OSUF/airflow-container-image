@@ -39,8 +39,8 @@ from airflow.models.taskinstance import TaskInstance
 from airflow.providers.cncf.kubernetes.hooks.kubernetes import KubernetesHook
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.cncf.kubernetes.utils.pod_manager import OnFinishAction, PodManager
+from airflow.sdk.definitions.context import Context
 from airflow.utils import timezone
-from airflow.utils.context import Context
 from airflow.utils.types import DagRunType
 from airflow.version import version as airflow_version
 from kubernetes_tests.test_base import BaseK8STest, StringContainingId
@@ -50,13 +50,30 @@ POD_MANAGER_CLASS = "airflow.providers.cncf.kubernetes.utils.pod_manager.PodMana
 
 
 def create_context(task) -> Context:
+    from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
     dag = DAG(dag_id="dag", schedule=None)
     logical_date = timezone.datetime(2016, 1, 1, 1, 0, 0, tzinfo=timezone.parse_timezone("Europe/Amsterdam"))
-    dag_run = DagRun(
-        dag_id=dag.dag_id,
-        logical_date=logical_date,
-        run_id=DagRun.generate_run_id(DagRunType.MANUAL, logical_date),
-    )
+
+    if AIRFLOW_V_3_0_PLUS:
+        dag_run = DagRun(
+            dag_id=dag.dag_id,
+            logical_date=logical_date,
+            run_id=DagRun.generate_run_id(
+                run_type=DagRunType.MANUAL,
+                logical_date=logical_date,
+                run_after=logical_date,
+            ),
+        )
+    else:
+        dag_run = DagRun(
+            dag_id=dag.dag_id,
+            logical_date=logical_date,
+            run_id=DagRun.generate_run_id(  # type: ignore[call-arg]
+                run_type=DagRunType.MANUAL,
+                logical_date=logical_date,
+            ),
+        )
     task_instance = TaskInstance(task=task)
     task_instance.dag_run = dag_run
     task_instance.dag_id = dag.dag_id
@@ -1054,18 +1071,22 @@ class TestKubernetesPodOperatorSystem:
 
     def test_pod_name(self, mock_get_connection):
         pod_name_too_long = "a" * 221
+        k = KubernetesPodOperator(
+            namespace="default",
+            image="ubuntu:16.04",
+            cmds=["bash", "-cx"],
+            arguments=["echo 10"],
+            labels=self.labels,
+            name=pod_name_too_long,
+            task_id=str(uuid4()),
+            in_cluster=False,
+            do_xcom_push=False,
+        )
+        # Name is now in template fields, and it's final value requires context
+        # so we need to execute for name validation
+        context = create_context(k)
         with pytest.raises(AirflowException):
-            KubernetesPodOperator(
-                namespace="default",
-                image="ubuntu:16.04",
-                cmds=["bash", "-cx"],
-                arguments=["echo 10"],
-                labels=self.labels,
-                name=pod_name_too_long,
-                task_id=str(uuid4()),
-                in_cluster=False,
-                do_xcom_push=False,
-            )
+            k.execute(context)
 
     def test_on_kill(self, mock_get_connection):
         hook = KubernetesHook(conn_id=None, in_cluster=False)
@@ -1306,7 +1327,101 @@ class TestKubernetesPodOperatorSystem:
         )
         assert MyK8SPodOperator(task_id=str(uuid4())).base_container_name == "tomato-sauce"
 
+    def test_init_container_logs(self, mock_get_connection):
+        marker_from_init_container = f"{uuid4()}"
+        marker_from_main_container = f"{uuid4()}"
+        callback = MagicMock()
+        init_container = k8s.V1Container(
+            name="init-container",
+            image="busybox",
+            command=["sh", "-cx"],
+            args=[f"echo {marker_from_init_container}"],
+        )
+        k = KubernetesPodOperator(
+            namespace="default",
+            image="busybox",
+            cmds=["sh", "-cx"],
+            arguments=[f"echo {marker_from_main_container}"],
+            labels=self.labels,
+            task_id=str(uuid4()),
+            in_cluster=False,
+            do_xcom_push=False,
+            startup_timeout_seconds=60,
+            init_containers=[init_container],
+            init_container_logs=True,
+            callbacks=callback,
+        )
+        context = create_context(k)
+        k.execute(context)
 
+        calls_args = "\n".join(["".join(c.kwargs["line"]) for c in callback.progress_callback.call_args_list])
+        assert marker_from_init_container in calls_args
+        assert marker_from_main_container in calls_args
+
+    def test_init_container_logs_filtered(self, mock_get_connection):
+        marker_from_init_container_to_log_1 = f"{uuid4()}"
+        marker_from_init_container_to_log_2 = f"{uuid4()}"
+        marker_from_init_container_to_ignore = f"{uuid4()}"
+        marker_from_main_container = f"{uuid4()}"
+        callback = MagicMock()
+        init_container_to_log_1 = k8s.V1Container(
+            name="init-container-to-log-1",
+            image="busybox",
+            command=["sh", "-cx"],
+            args=[f"echo {marker_from_init_container_to_log_1}"],
+        )
+        init_container_to_log_2 = k8s.V1Container(
+            name="init-container-to-log-2",
+            image="busybox",
+            command=["sh", "-cx"],
+            args=[f"echo {marker_from_init_container_to_log_2}"],
+        )
+        init_container_to_ignore = k8s.V1Container(
+            name="init-container-to-ignore",
+            image="busybox",
+            command=["sh", "-cx"],
+            args=[f"echo {marker_from_init_container_to_ignore}"],
+        )
+        k = KubernetesPodOperator(
+            namespace="default",
+            image="busybox",
+            cmds=["sh", "-cx"],
+            arguments=[f"echo {marker_from_main_container}"],
+            labels=self.labels,
+            task_id=str(uuid4()),
+            in_cluster=False,
+            do_xcom_push=False,
+            startup_timeout_seconds=60,
+            init_containers=[
+                init_container_to_log_1,
+                init_container_to_log_2,
+                init_container_to_ignore,
+            ],
+            init_container_logs=[
+                # not same order as defined in init_containers
+                "init-container-to-log-2",
+                "init-container-to-log-1",
+            ],
+            callbacks=callback,
+        )
+        context = create_context(k)
+        k.execute(context)
+
+        calls_args = "\n".join(["".join(c.kwargs["line"]) for c in callback.progress_callback.call_args_list])
+        assert marker_from_init_container_to_log_1 in calls_args
+        assert marker_from_init_container_to_log_2 in calls_args
+        assert marker_from_init_container_to_ignore not in calls_args
+        assert marker_from_main_container in calls_args
+
+        assert (
+            calls_args.find(marker_from_init_container_to_log_1)
+            < calls_args.find(marker_from_init_container_to_log_2)
+            < calls_args.find(marker_from_main_container)
+        )
+
+
+# TODO: Task SDK: https://github.com/apache/airflow/issues/45438
+@pytest.mark.skip(reason="AIP-72: Secret Masking yet to be implemented")
 def test_hide_sensitive_field_in_templated_fields_on_error(caplog, monkeypatch):
     logger = logging.getLogger("airflow.task")
     monkeypatch.setattr(logger, "propagate", True)

@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import datetime
+import logging
 from collections.abc import Iterable
+from enum import Enum
+from functools import singledispatch
 from traceback import format_exception
 from typing import TYPE_CHECKING, Any
 
@@ -25,9 +28,11 @@ from sqlalchemy import Column, Integer, String, Text, delete, func, or_, select,
 from sqlalchemy.orm import relationship, selectinload
 from sqlalchemy.sql.functions import coalesce
 
+from airflow.assets.manager import AssetManager
 from airflow.models.asset import asset_trigger_association_table
 from airflow.models.base import Base
 from airflow.models.taskinstance import TaskInstance
+from airflow.triggers import base as events
 from airflow.utils import timezone
 from airflow.utils.retries import run_with_db_retries
 from airflow.utils.session import NEW_SESSION, provide_session
@@ -39,6 +44,29 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import Select
 
     from airflow.triggers.base import BaseTrigger
+
+TRIGGER_FAIL_REPR = "__fail__"
+"""String value to represent trigger failure.
+
+Internal use only.
+
+:meta private:
+"""
+
+log = logging.getLogger(__name__)
+
+
+class TriggerFailureReason(str, Enum):
+    """
+    Reasons for trigger failures.
+
+    Internal use only.
+
+    :meta private:
+    """
+
+    TRIGGER_TIMEOUT = "Trigger timeout"
+    TRIGGER_FAILURE = "Trigger failure"
 
 
 class Trigger(Base):
@@ -160,13 +188,19 @@ class Trigger(Base):
 
     @classmethod
     @provide_session
+    def fetch_trigger_ids_with_asset(cls, session: Session = NEW_SESSION) -> set[str]:
+        """Fetch all the trigger IDs associated with at least one asset."""
+        query = select(asset_trigger_association_table.columns.trigger_id)
+        return {trigger_id for trigger_id in session.scalars(query)}
+
+    @classmethod
+    @provide_session
     def clean_unused(cls, session: Session = NEW_SESSION) -> None:
         """
-        Delete all triggers that have no tasks dependent on them.
+        Delete all triggers that have no tasks dependent on them and are not associated to an asset.
 
-        Triggers have a one-to-many relationship to task instances, so we need
-        to clean those up first. Afterwards we can drop the triggers not
-        referenced by anyone.
+        Triggers have a one-to-many relationship to task instances, so we need to clean those up first.
+        Afterward we can drop the triggers not referenced by anyone.
         """
         # Update all task instances with trigger IDs that are not DEFERRED to remove them
         for attempt in run_with_db_retries():
@@ -179,9 +213,10 @@ class Trigger(Base):
                     .values(trigger_id=None)
                 )
 
-        # Get all triggers that have no task instances depending on them and delete them
+        # Get all triggers that have no task instances and assets depending on them and delete them
         ids = (
             select(cls.id)
+            .where(~cls.assets.any())
             .join(TaskInstance, cls.id == TaskInstance.trigger_id, isouter=True)
             .group_by(cls.id)
             .having(func.count(TaskInstance.trigger_id) == 0)
@@ -195,14 +230,27 @@ class Trigger(Base):
 
     @classmethod
     @provide_session
-    def submit_event(cls, trigger_id, event, session: Session = NEW_SESSION) -> None:
-        """Take an event from an instance of itself, and trigger all dependent tasks to resume."""
+    def submit_event(cls, trigger_id, event: events.TriggerEvent, session: Session = NEW_SESSION) -> None:
+        """
+        Fire an event.
+
+        Resume all tasks that were in deferred state.
+        Send an event to all assets associated to the trigger.
+        """
+        # Resume deferred tasks
         for task_instance in session.scalars(
             select(TaskInstance).where(
                 TaskInstance.trigger_id == trigger_id, TaskInstance.state == TaskInstanceState.DEFERRED
             )
         ):
-            event.handle_submit(task_instance=task_instance)
+            handle_event_submit(event, task_instance=task_instance, session=session)
+
+        # Send an event to assets
+        trigger = session.scalars(select(cls).where(cls.id == trigger_id)).one()
+        for asset in trigger.assets:
+            AssetManager.register_asset_change(
+                asset=asset.to_public(), session=session, extra={"from_trigger": True}
+            )
 
     @classmethod
     @provide_session
@@ -217,10 +265,6 @@ class Trigger(Base):
         We use a special __fail__ value for next_method to achieve this that
         the runtime code understands as immediate-fail, and pack the error into
         next_kwargs.
-
-        TODO: Once we have shifted callback (and email) handling to run on
-        workers as first-class concepts, we can run the failure code here
-        in-process, but we can't do that right now.
         """
         for task_instance in session.scalars(
             select(TaskInstance).where(
@@ -228,18 +272,25 @@ class Trigger(Base):
             )
         ):
             # Add the error and set the next_method to the fail state
-            traceback = format_exception(type(exc), exc, exc.__traceback__) if exc else None
-            task_instance.next_method = "__fail__"
-            task_instance.next_kwargs = {"error": "Trigger failure", "traceback": traceback}
+            if isinstance(exc, BaseException):
+                traceback = format_exception(type(exc), exc, exc.__traceback__)
+            else:
+                traceback = exc
+            task_instance.next_method = TRIGGER_FAIL_REPR
+            task_instance.next_kwargs = {
+                "error": TriggerFailureReason.TRIGGER_FAILURE,
+                "traceback": traceback,
+            }
             # Remove ourselves as its trigger
             task_instance.trigger_id = None
             # Finally, mark it as scheduled so it gets re-queued
             task_instance.state = TaskInstanceState.SCHEDULED
+            task_instance.scheduled_dttm = timezone.utcnow()
 
     @classmethod
     @provide_session
     def ids_for_triggerer(cls, triggerer_id, session: Session = NEW_SESSION) -> list[int]:
-        """Retrieve a list of triggerer_ids."""
+        """Retrieve a list of trigger ids."""
         return session.scalars(select(cls.id).where(cls.triggerer_id == triggerer_id)).all()
 
     @classmethod
@@ -301,4 +352,94 @@ class Trigger(Base):
             session,
             skip_locked=True,
         )
-        return session.execute(query).all()
+        ti_triggers = session.execute(query).all()
+
+        query = with_row_locks(
+            select(cls.id).where(cls.assets.any()).order_by(cls.created_date).limit(capacity),
+            session,
+            skip_locked=True,
+        )
+        asset_triggers = session.execute(query).all()
+
+        # Add triggers associated to assets after triggers associated to tasks
+        # It prioritizes DAGs over event driven scheduling which is fair
+        return ti_triggers + asset_triggers
+
+
+@singledispatch
+def handle_event_submit(event: events.TriggerEvent, *, task_instance: TaskInstance, session: Session) -> None:
+    """
+    Handle the submit event for a given task instance.
+
+    This function sets the next method and next kwargs of the task instance,
+    as well as its state to scheduled. It also adds the event's payload
+    into the kwargs for the task.
+
+    :param task_instance: The task instance to handle the submit event for.
+    :param session: The session to be used for the database callback sink.
+    """
+    from airflow.utils.state import TaskInstanceState
+
+    # Get the next kwargs of the task instance, or an empty dictionary if it doesn't exist
+    next_kwargs = task_instance.next_kwargs or {}
+
+    # Add the event's payload into the kwargs for the task
+    next_kwargs["event"] = event.payload
+
+    # Update the next kwargs of the task instance
+    task_instance.next_kwargs = next_kwargs
+
+    # Remove ourselves as its trigger
+    task_instance.trigger_id = None
+
+    # Set the state of the task instance to scheduled
+    task_instance.state = TaskInstanceState.SCHEDULED
+    task_instance.scheduled_dttm = timezone.utcnow()
+    session.flush()
+
+
+@handle_event_submit.register(events.BaseTaskEndEvent)
+def _process_BaseTaskEndEvent(
+    event: events.BaseTaskEndEvent, *, task_instance: TaskInstance, session: Session
+) -> None:
+    """
+    Submit event for the given task instance.
+
+    Marks the task with the state `task_instance_state` and optionally pushes xcom if applicable.
+
+    :param task_instance: The task instance to be submitted.
+    :param session: The session to be used for the database callback sink.
+    """
+    from airflow.callbacks.callback_requests import TaskCallbackRequest
+    from airflow.callbacks.database_callback_sink import DatabaseCallbackSink
+    from airflow.utils.state import TaskInstanceState
+
+    # Mark the task with terminal state and prevent it from resuming on worker
+    task_instance.trigger_id = None
+    task_instance.set_state(event.task_instance_state, session=session)
+
+    def _submit_callback_if_necessary() -> None:
+        """Submit a callback request if the task state is SUCCESS or FAILED."""
+        if event.task_instance_state in (TaskInstanceState.SUCCESS, TaskInstanceState.FAILED):
+            request = TaskCallbackRequest(
+                filepath=task_instance.dag_model.relative_fileloc,
+                ti=task_instance,
+                task_callback_type=event.task_instance_state,
+                bundle_name=task_instance.dag_model.bundle_name,
+                bundle_version=task_instance.dag_run.bundle_version,
+            )
+            log.info("Sending callback: %s", request)
+            try:
+                DatabaseCallbackSink().send(callback=request, session=session)
+            except Exception:
+                log.exception("Failed to send callback.")
+
+    def _push_xcoms_if_necessary() -> None:
+        """Pushes XComs to the database if they are provided."""
+        if event.xcoms:
+            for key, value in event.xcoms.items():
+                task_instance.xcom_push(key=key, value=value)
+
+    _submit_callback_if_necessary()
+    _push_xcoms_if_necessary()
+    session.flush()

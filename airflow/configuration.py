@@ -48,7 +48,6 @@ from typing_extensions import overload
 from airflow.exceptions import AirflowConfigException
 from airflow.secrets import DEFAULT_SECRETS_SEARCH_PATH
 from airflow.utils import yaml
-from airflow.utils.empty_set import _get_empty_set_for_configuration
 from airflow.utils.module_loading import import_string
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.weight_rule import WeightRule
@@ -187,7 +186,7 @@ class AirflowConfigParser(ConfigParser):
 
     This is a subclass of ConfigParser that supports defaults and deprecated options.
 
-    The defaults are stored in the ``_default_values ConfigParser. The configuration description keeps
+    The defaults are stored in the ``_default_values``. The configuration description keeps
     description of all the options available in Airflow (description follow config.yaml.schema).
 
     :param default_config: default configuration (in the form of ini file).
@@ -209,7 +208,7 @@ class AirflowConfigParser(ConfigParser):
         # interpolation placeholders. The _default_values config parser will interpolate them
         # properly when we call get() on it.
         self._default_values = create_default_config_parser(self.configuration_description)
-        self._pre_2_7_default_values = create_pre_2_7_defaults()
+        self._provider_config_fallback_default_values = create_provider_config_fallback_defaults()
         if default_config is not None:
             self._update_defaults_from_string(default_config)
         self._update_logging_deprecated_template_to_one_from_defaults()
@@ -292,9 +291,9 @@ class AirflowConfigParser(ConfigParser):
             return value.replace("%", "%%")
         return value
 
-    def get_default_pre_2_7_value(self, section: str, key: str, **kwargs) -> Any:
-        """Get pre 2.7 default config values."""
-        return self._pre_2_7_default_values.get(section, key, fallback=None, **kwargs)
+    def get_provider_config_fallback_defaults(self, section: str, key: str, **kwargs) -> Any:
+        """Get provider config fallback default values."""
+        return self._provider_config_fallback_default_values.get(section, key, fallback=None, **kwargs)
 
     # These configuration elements can be fetched as the stdout of commands
     # following the "{section}__{name}_cmd" pattern, the idea behind this
@@ -304,9 +303,7 @@ class AirflowConfigParser(ConfigParser):
     @functools.cached_property
     def sensitive_config_values(self) -> set[tuple[str, str]]:
         if self.configuration_description is None:
-            return (
-                _get_empty_set_for_configuration()
-            )  # we can't use set() here because set is defined below # ¯\_(ツ)_/¯
+            return set()
         flattened = {
             (s, k): item
             for s, s_c in self.configuration_description.items()
@@ -327,7 +324,9 @@ class AirflowConfigParser(ConfigParser):
     # A mapping of (new section, new option) -> (old section, old option, since_version).
     # When reading new option, the old option will be checked to see if it exists. If it does a
     # DeprecationWarning will be issued and the old option will be used instead
-    deprecated_options: dict[tuple[str, str], tuple[str, str, str]] = {}
+    deprecated_options: dict[tuple[str, str], tuple[str, str, str]] = {
+        ("dag_processor", "refresh_interval"): ("scheduler", "dag_dir_list_interval", "3.0"),
+    }
 
     # A mapping of new section -> (old section, since_version).
     deprecated_sections: dict[str, tuple[str, str]] = {}
@@ -390,7 +389,11 @@ class AirflowConfigParser(ConfigParser):
         ("core", "default_task_weight_rule"): sorted(WeightRule.all_weight_rules()),
         ("core", "dag_ignore_file_syntax"): ["regexp", "glob"],
         ("core", "mp_start_method"): multiprocessing.get_all_start_methods(),
-        ("scheduler", "file_parsing_sort_mode"): ["modified_time", "random_seeded_by_host", "alphabetical"],
+        ("dag_processor", "file_parsing_sort_mode"): [
+            "modified_time",
+            "random_seeded_by_host",
+            "alphabetical",
+        ],
         ("logging", "logging_level"): _available_logging_levels,
         ("logging", "fab_logging_level"): _available_logging_levels,
         # celery_logging_level can be empty, which uses logging_level as fallback
@@ -515,6 +518,8 @@ class AirflowConfigParser(ConfigParser):
         if example is not None and include_examples:
             if extra_spacing:
                 file.write("#\n")
+            example_lines = example.splitlines()
+            example = "\n# ".join(example_lines)
             file.write(f"# Example: {option} = {example}\n")
             needs_separation = True
         if include_sources and sources_dict:
@@ -553,6 +558,8 @@ class AirflowConfigParser(ConfigParser):
             file.write(f"# {option} = \n")
         else:
             if comment_out_everything:
+                value_lines = value.splitlines()
+                value = "\n# ".join(value_lines)
                 file.write(f"# {option} = {value}\n")
             else:
                 file.write(f"{option} = {value}\n")
@@ -775,7 +782,7 @@ class AirflowConfigParser(ConfigParser):
         )
 
     def mask_secrets(self):
-        from airflow.utils.log.secrets_masker import mask_secret
+        from airflow.sdk.execution_time.secrets_masker import mask_secret
 
         for section, key in self.sensitive_config_values:
             try:
@@ -884,58 +891,60 @@ class AirflowConfigParser(ConfigParser):
         section: str,
         key: str,
         suppress_warnings: bool = False,
+        lookup_from_deprecated_options: bool = True,
         _extra_stacklevel: int = 0,
         **kwargs,
     ) -> str | None:
         section = section.lower()
         key = key.lower()
         warning_emitted = False
-        deprecated_section: str | None
-        deprecated_key: str | None
+        deprecated_section: str | None = None
+        deprecated_key: str | None = None
 
-        option_description = self.configuration_description.get(section, {}).get(key, {})
-        if option_description.get("deprecated"):
-            deprecation_reason = option_description.get("deprecation_reason", "")
-            warnings.warn(
-                f"The '{key}' option in section {section} is deprecated. {deprecation_reason}",
-                DeprecationWarning,
-                stacklevel=2 + _extra_stacklevel,
-            )
-        # For when we rename whole sections
-        if section in self.inversed_deprecated_sections:
-            deprecated_section, deprecated_key = (section, key)
-            section = self.inversed_deprecated_sections[section]
-            if not self._suppress_future_warnings:
+        if lookup_from_deprecated_options:
+            option_description = self.configuration_description.get(section, {}).get(key, {})
+            if option_description.get("deprecated"):
+                deprecation_reason = option_description.get("deprecation_reason", "")
                 warnings.warn(
-                    f"The config section [{deprecated_section}] has been renamed to "
-                    f"[{section}]. Please update your `conf.get*` call to use the new name",
-                    FutureWarning,
+                    f"The '{key}' option in section {section} is deprecated. {deprecation_reason}",
+                    DeprecationWarning,
                     stacklevel=2 + _extra_stacklevel,
                 )
-            # Don't warn about individual rename if the whole section is renamed
-            warning_emitted = True
-        elif (section, key) in self.inversed_deprecated_options:
-            # Handle using deprecated section/key instead of the new section/key
-            new_section, new_key = self.inversed_deprecated_options[(section, key)]
-            if not self._suppress_future_warnings and not warning_emitted:
-                warnings.warn(
-                    f"section/key [{section}/{key}] has been deprecated, you should use"
-                    f"[{new_section}/{new_key}] instead. Please update your `conf.get*` call to use the "
-                    "new name",
-                    FutureWarning,
-                    stacklevel=2 + _extra_stacklevel,
-                )
+            # For the cases in which we rename whole sections
+            if section in self.inversed_deprecated_sections:
+                deprecated_section, deprecated_key = (section, key)
+                section = self.inversed_deprecated_sections[section]
+                if not self._suppress_future_warnings:
+                    warnings.warn(
+                        f"The config section [{deprecated_section}] has been renamed to "
+                        f"[{section}]. Please update your `conf.get*` call to use the new name",
+                        FutureWarning,
+                        stacklevel=2 + _extra_stacklevel,
+                    )
+                # Don't warn about individual rename if the whole section is renamed
                 warning_emitted = True
-            deprecated_section, deprecated_key = section, key
-            section, key = (new_section, new_key)
-        elif section in self.deprecated_sections:
-            # When accessing the new section name, make sure we check under the old config name
-            deprecated_key = key
-            deprecated_section = self.deprecated_sections[section][0]
-        else:
-            deprecated_section, deprecated_key, _ = self.deprecated_options.get(
-                (section, key), (None, None, None)
-            )
+            elif (section, key) in self.inversed_deprecated_options:
+                # Handle using deprecated section/key instead of the new section/key
+                new_section, new_key = self.inversed_deprecated_options[(section, key)]
+                if not self._suppress_future_warnings and not warning_emitted:
+                    warnings.warn(
+                        f"section/key [{section}/{key}] has been deprecated, you should use"
+                        f"[{new_section}/{new_key}] instead. Please update your `conf.get*` call to use the "
+                        "new name",
+                        FutureWarning,
+                        stacklevel=2 + _extra_stacklevel,
+                    )
+                    warning_emitted = True
+                deprecated_section, deprecated_key = section, key
+                section, key = (new_section, new_key)
+            elif section in self.deprecated_sections:
+                # When accessing the new section name, make sure we check under the old config name
+                deprecated_key = key
+                deprecated_section = self.deprecated_sections[section][0]
+            else:
+                deprecated_section, deprecated_key, _ = self.deprecated_options.get(
+                    (section, key), (None, None, None)
+                )
         # first check environment variables
         option = self._get_environment_variables(
             deprecated_key,
@@ -989,9 +998,9 @@ class AirflowConfigParser(ConfigParser):
         if self.get_default_value(section, key) is not None or "fallback" in kwargs:
             return expand_env_var(self.get_default_value(section, key, **kwargs))
 
-        if self.get_default_pre_2_7_value(section, key) is not None:
+        if self.get_provider_config_fallback_defaults(section, key) is not None:
             # no expansion needed
-            return self.get_default_pre_2_7_value(section, key, **kwargs)
+            return self.get_provider_config_fallback_defaults(section, key, **kwargs)
 
         if not suppress_warnings:
             log.warning("section/key [%s/%s] not found in config", section, key)
@@ -1240,7 +1249,7 @@ class AirflowConfigParser(ConfigParser):
         """
         super().read_dict(dictionary=dictionary, source=source)
 
-    def has_option(self, section: str, option: str) -> bool:
+    def has_option(self, section: str, option: str, lookup_from_deprecated_options: bool = True) -> bool:
         """
         Check if option is defined.
 
@@ -1252,7 +1261,14 @@ class AirflowConfigParser(ConfigParser):
         :return:
         """
         try:
-            value = self.get(section, option, fallback=None, _extra_stacklevel=1, suppress_warnings=True)
+            value = self.get(
+                section,
+                option,
+                fallback=None,
+                _extra_stacklevel=1,
+                suppress_warnings=True,
+                lookup_from_deprecated_options=lookup_from_deprecated_options,
+            )
             if value is None:
                 return False
             return True
@@ -1382,7 +1398,7 @@ class AirflowConfigParser(ConfigParser):
 
         # We check sequentially all those sources and the last one we saw it in will "win"
         configs: Iterable[tuple[str, ConfigParser]] = [
-            ("default-pre-2-7", self._pre_2_7_default_values),
+            ("provider-fallback-defaults", self._provider_config_fallback_default_values),
             ("default", self._default_values),
             ("airflow.cfg", self),
         ]
@@ -1505,12 +1521,7 @@ class AirflowConfigParser(ConfigParser):
                 opt = (opt, "env var")
 
             section = section.lower()
-            # if we lower key for kubernetes_environment_variables section,
-            # then we won't be able to set any Airflow environment
-            # variables. Airflow only parse environment variables starts
-            # with AIRFLOW_. Therefore, we need to make it a special case.
-            if section != "kubernetes_environment_variables":
-                key = key.lower()
+            key = key.lower()
             config_sources.setdefault(section, {}).update({key: opt})
 
     def _filter_by_source(
@@ -1740,7 +1751,6 @@ class AirflowConfigParser(ConfigParser):
         with StringIO(unit_test_config) as test_config_file:
             self.read_file(test_config_file)
         # set fernet key to a random value
-        global FERNET_KEY
         FERNET_KEY = Fernet.generate_key().decode()
         self.expand_all_configuration_values()
         log.info("Unit test configuration loaded from 'config_unit_tests.cfg'")
@@ -1870,7 +1880,7 @@ def get_airflow_config(airflow_home: str) -> str:
 
 
 def get_all_expansion_variables() -> dict[str, Any]:
-    return {k: v for d in [globals(), locals()] for k, v in d.items()}
+    return {k: v for d in [globals(), locals()] for k, v in d.items() if not k.startswith("_")}
 
 
 def _generate_fernet_key() -> str:
@@ -1906,21 +1916,32 @@ def create_default_config_parser(configuration_description: dict[str, dict[str, 
     return parser
 
 
-def create_pre_2_7_defaults() -> ConfigParser:
+def create_provider_config_fallback_defaults() -> ConfigParser:
     """
-    Create parser using the old defaults from Airflow < 2.7.0.
+    Create fallback defaults.
 
-    This is used in order to be able to fall-back to those defaults when old version of provider,
-    not supporting "config contribution" is installed with Airflow 2.7.0+. This "default"
-    configuration does not support variable expansion, those are pretty much hard-coded defaults '
-    we want to fall-back to in such case.
+    This parser contains provider defaults for Airflow configuration, containing fallback default values
+    that might be needed when provider classes are being imported - before provider's configuration
+    is loaded.
+
+    Unfortunately airflow currently performs a lot of stuff during importing and some of that might lead
+    to retrieving provider configuration before the defaults for the provider are loaded.
+
+    Those are only defaults, so if you have "real" values configured in your configuration (.cfg file or
+    environment variables) those will be used as usual.
+
+    NOTE!! Do NOT attempt to remove those default fallbacks thinking that they are unnecessary duplication,
+    at least not until we fix the way how airflow imports "do stuff". This is unlikely to succeed.
+
+    You've been warned!
     """
     config_parser = ConfigParser()
-    config_parser.read(_default_config_file_path("pre_2_7_defaults.cfg"))
+    config_parser.read(_default_config_file_path("provider_config_fallback_defaults.cfg"))
     return config_parser
 
 
 def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
+    global FERNET_KEY, JWT_SECRET_KEY
     airflow_config = pathlib.Path(AIRFLOW_CONFIG)
     if airflow_config.is_dir():
         msg = (
@@ -1932,10 +1953,7 @@ def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
         log.debug("Creating new Airflow config file in: %s", airflow_config.__fspath__())
         config_directory = airflow_config.parent
         if not config_directory.exists():
-            # Compatibility with Python 3.8, ``PurePath.is_relative_to`` was added in Python 3.9
-            try:
-                config_directory.relative_to(AIRFLOW_HOME)
-            except ValueError:
+            if not config_directory.is_relative_to(AIRFLOW_HOME):
                 msg = (
                     f"Config directory {config_directory.__fspath__()!r} not exists "
                     f"and it is not relative to AIRFLOW_HOME {AIRFLOW_HOME!r}. "
@@ -1944,13 +1962,14 @@ def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
                 raise FileNotFoundError(msg) from None
             log.debug("Create directory %r for Airflow config", config_directory.__fspath__())
             config_directory.mkdir(parents=True, exist_ok=True)
-        if conf.get("core", "fernet_key", fallback=None) is None:
+        if conf.get("core", "fernet_key", fallback=None) in (None, ""):
             # We know that FERNET_KEY is not set, so we can generate it, set as global key
             # and also write it to the config file so that same key will be used next time
-            global FERNET_KEY
             FERNET_KEY = _generate_fernet_key()
-            conf.remove_option("core", "fernet_key")
-            conf.set("core", "fernet_key", FERNET_KEY)
+            conf.configuration_description["core"]["options"]["fernet_key"]["default"] = FERNET_KEY
+
+        JWT_SECRET_KEY = b64encode(os.urandom(16)).decode("utf-8")
+        conf.configuration_description["api"]["options"]["auth_jwt_secret"]["default"] = JWT_SECRET_KEY
         pathlib.Path(airflow_config.__fspath__()).touch()
         make_group_other_inaccessible(airflow_config.__fspath__())
         with open(airflow_config, "w") as file:
@@ -2113,8 +2132,7 @@ def initialize_auth_manager() -> BaseAuthManager:
 
     if not auth_manager_cls:
         raise AirflowConfigException(
-            "No auth manager defined in the config. "
-            "Please specify one using section/key [core/auth_manager]."
+            "No auth manager defined in the config. Please specify one using section/key [core/auth_manager]."
         )
 
     return auth_manager_cls()
@@ -2145,8 +2163,8 @@ else:
     TEST_PLUGINS_FOLDER = os.path.join(AIRFLOW_HOME, "plugins")
 
 SECRET_KEY = b64encode(os.urandom(16)).decode("utf-8")
-JWT_SECRET_KEY = b64encode(os.urandom(16)).decode("utf-8")
 FERNET_KEY = ""  # Set only if needed when generating a new file
+JWT_SECRET_KEY = ""
 WEBSERVER_CONFIG = ""  # Set by initialize_config
 
 conf: AirflowConfigParser = initialize_config()

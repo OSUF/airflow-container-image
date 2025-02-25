@@ -18,33 +18,33 @@ from __future__ import annotations
 
 from typing import Literal
 
-from airflow.api_fastapi.core_api.base import BaseModel
+from airflow.api_fastapi.core_api.datamodels.ui.common import (
+    BaseEdgeResponse,
+    BaseGraphResponse,
+    BaseNodeResponse,
+)
 
 
-class EdgeResponse(BaseModel):
+class EdgeResponse(BaseEdgeResponse):
     """Edge serializer for responses."""
 
     is_setup_teardown: bool | None = None
     label: str | None = None
-    source_id: str
-    target_id: str
+    is_source_asset: bool | None = None
 
 
-class NodeResponse(BaseModel):
+class NodeResponse(BaseNodeResponse):
     """Node serializer for responses."""
 
     children: list[NodeResponse] | None = None
-    id: str | None
     is_mapped: bool | None = None
-    label: str | None = None
     tooltip: str | None = None
     setup_teardown_type: Literal["setup", "teardown"] | None = None
-    type: Literal["join", "sensor", "task", "task_group"]
+    operator: str | None = None
+    asset_condition_type: Literal["or-gate", "and-gate"] | None = None
 
 
-class StructureDataResponse(BaseModel):
+class StructureDataResponse(BaseGraphResponse[EdgeResponse, NodeResponse]):
     """Structure Data serializer for responses."""
 
-    edges: list[EdgeResponse]
-    nodes: list[NodeResponse]
     arrange: Literal["BT", "LR", "RL", "TB"]

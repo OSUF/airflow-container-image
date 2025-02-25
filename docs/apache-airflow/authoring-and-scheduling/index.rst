@@ -28,7 +28,6 @@ It's recommended that you first review the pages in :doc:`core concepts </core-c
 
     plugins
     deferring
-    dagfile-processing
     serializers
     connections
     dynamic-task-mapping
@@ -43,3 +42,4 @@ It's recommended that you first review the pages in :doc:`core concepts </core-c
     timezone
     Assets <datasets>
     timetable
+    Event-driven scheduling <event-scheduling>

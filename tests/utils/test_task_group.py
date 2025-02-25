@@ -33,7 +33,7 @@ from airflow.exceptions import TaskAlreadyInTaskGroup
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.dag import DAG
 from airflow.models.xcom_arg import XComArg
-from airflow.operators.empty import EmptyOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.utils.dag_edges import dag_edges
 from airflow.utils.task_group import TaskGroup, task_group_to_dict, task_group_to_dict_legacy
 
@@ -186,21 +186,31 @@ EXPECTED_JSON = {
                     "tooltip": "",
                     "is_mapped": False,
                     "children": [
-                        {"id": "group234.group34.task3", "label": "task3", "type": "task"},
-                        {"id": "group234.group34.task4", "label": "task4", "type": "task"},
+                        {
+                            "id": "group234.group34.task3",
+                            "label": "task3",
+                            "operator": "EmptyOperator",
+                            "type": "task",
+                        },
+                        {
+                            "id": "group234.group34.task4",
+                            "label": "task4",
+                            "operator": "EmptyOperator",
+                            "type": "task",
+                        },
                         {"id": "group234.group34.downstream_join_id", "label": "", "type": "join"},
                     ],
-                    "type": "task_group",
+                    "type": "task",
                 },
-                {"id": "group234.task2", "label": "task2", "type": "task"},
+                {"id": "group234.task2", "label": "task2", "operator": "EmptyOperator", "type": "task"},
                 {"id": "group234.upstream_join_id", "label": "", "type": "join"},
             ],
-            "type": "task_group",
+            "type": "task",
         },
-        {"id": "task1", "label": "task1", "type": "task"},
-        {"id": "task5", "label": "task5", "type": "task"},
+        {"id": "task1", "label": "task1", "operator": "EmptyOperator", "type": "task"},
+        {"id": "task5", "label": "task5", "operator": "EmptyOperator", "type": "task"},
     ],
-    "type": "task_group",
+    "type": "task",
 }
 
 
@@ -643,7 +653,7 @@ def test_dag_edges_setup_teardown():
 def test_dag_edges_setup_teardown_nested():
     from airflow.decorators import task, task_group
     from airflow.models.dag import DAG
-    from airflow.operators.empty import EmptyOperator
+    from airflow.providers.standard.operators.empty import EmptyOperator
 
     logical_date = pendulum.parse("20200101")
 
@@ -1734,3 +1744,32 @@ def test_task_group_with_invalid_arg_type_raises_error():
     with DAG(dag_id="dag_with_tg_invalid_arg_type", schedule=None):
         with pytest.raises(TypeError, match=error_msg):
             _ = TaskGroup("group_1", ui_color=123)
+
+
+def test_task_group_display_name_used_as_label():
+    """Test that the group_display_name for TaskGroup is used as the label for display on the UI."""
+
+    with DAG(dag_id="display_name", schedule=None, start_date=pendulum.datetime(2022, 1, 1)) as dag:
+        with TaskGroup(group_id="tg", group_display_name="my_custom_name") as tg:
+            task1 = BaseOperator(task_id="task1")
+            task2 = BaseOperator(task_id="task2")
+            task1 >> task2
+
+    assert tg.group_id == "tg"
+    assert tg.label == "my_custom_name"
+    expected_node_id = {
+        "id": None,
+        "label": None,
+        "children": [
+            {
+                "id": "tg",
+                "label": "my_custom_name",
+                "children": [
+                    {"id": "tg.task1", "label": "task1"},
+                    {"id": "tg.task2", "label": "task2"},
+                ],
+            },
+        ],
+    }
+
+    assert extract_node_id(task_group_to_dict(dag.task_group), include_label=True) == expected_node_id

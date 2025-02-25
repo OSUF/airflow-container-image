@@ -47,15 +47,16 @@ from dateutil.relativedelta import relativedelta
 from airflow import settings
 from airflow.exceptions import (
     DuplicateTaskIdFound,
-    FailStopDagInvalidTriggerRule,
+    FailFastDagInvalidTriggerRule,
     ParamValidationError,
     TaskNotFound,
 )
-from airflow.models.param import DagParam, ParamsDict
-from airflow.sdk.definitions.abstractoperator import AbstractOperator
-from airflow.sdk.definitions.asset import Asset, AssetAlias, BaseAsset
+from airflow.sdk.definitions._internal.abstractoperator import AbstractOperator
+from airflow.sdk.definitions._internal.types import NOTSET
+from airflow.sdk.definitions.asset import AssetAll, BaseAsset
 from airflow.sdk.definitions.baseoperator import BaseOperator
-from airflow.sdk.types import NOTSET
+from airflow.sdk.definitions.context import Context
+from airflow.sdk.definitions.param import DagParam, ParamsDict
 from airflow.timetables.base import Timetable
 from airflow.timetables.simple import (
     AssetTriggeredTimetable,
@@ -63,7 +64,6 @@ from airflow.timetables.simple import (
     NullTimetable,
     OnceTimetable,
 )
-from airflow.utils.context import Context
 from airflow.utils.dag_cycle_tester import check_cycle
 from airflow.utils.decorators import fixup_decorator_warning_stack
 from airflow.utils.trigger_rule import TriggerRule
@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from pendulum.tz.timezone import FixedTimezone, Timezone
 
     from airflow.decorators import TaskDecoratorCollection
-    from airflow.models.operator import Operator
+    from airflow.sdk.definitions.abstractoperator import Operator
     from airflow.sdk.definitions.taskgroup import TaskGroup
     from airflow.typing_compat import Self
 
@@ -92,12 +92,7 @@ __all__ = [
 DagStateChangeCallback = Callable[[Context], None]
 ScheduleInterval = Union[None, str, timedelta, relativedelta]
 
-ScheduleArg = Union[
-    ScheduleInterval,
-    Timetable,
-    BaseAsset,
-    Collection[Union["Asset", "AssetAlias"]],
-]
+ScheduleArg = Union[ScheduleInterval, Timetable, BaseAsset, Collection[BaseAsset]]
 
 
 _DAG_HASH_ATTRS = frozenset(
@@ -120,7 +115,7 @@ def _create_timetable(interval: ScheduleInterval, timezone: Timezone | FixedTime
     """Create a Timetable instance from a plain ``schedule`` value."""
     from airflow.configuration import conf as airflow_conf
     from airflow.timetables.interval import CronDataIntervalTimetable, DeltaDataIntervalTimetable
-    from airflow.timetables.trigger import CronTriggerTimetable
+    from airflow.timetables.trigger import CronTriggerTimetable, DeltaTriggerTimetable
 
     if interval is None:
         return NullTimetable()
@@ -129,12 +124,13 @@ def _create_timetable(interval: ScheduleInterval, timezone: Timezone | FixedTime
     if interval == "@continuous":
         return ContinuousTimetable()
     if isinstance(interval, (timedelta, relativedelta)):
-        return DeltaDataIntervalTimetable(interval)
+        if airflow_conf.getboolean("scheduler", "create_cron_data_intervals"):
+            return DeltaDataIntervalTimetable(interval)
+        return DeltaTriggerTimetable(interval)
     if isinstance(interval, str):
         if airflow_conf.getboolean("scheduler", "create_cron_data_intervals"):
             return CronDataIntervalTimetable(interval, timezone)
-        else:
-            return CronTriggerTimetable(interval, timezone=timezone)
+        return CronTriggerTimetable(interval, timezone=timezone)
     raise ValueError(f"{interval!r} is not a valid schedule.")
 
 
@@ -351,7 +347,7 @@ class DAG:
         Can be used as an HTTP link (for example the link to your Slack channel), or a mailto link.
         e.g: {"dag_owner": "https://airflow.apache.org/"}
     :param auto_register: Automatically register this DAG when it is used in a ``with`` block
-    :param fail_stop: Fails currently running tasks when task in DAG fails.
+    :param fail_fast: Fails currently running tasks when task in DAG fails.
         **Warning**: A fail stop dag can only have tasks with the default trigger rule ("all_success").
         An exception will be thrown if any task in a fail stop dag has a non default trigger rule.
     :param dag_display_name: The display name of the DAG which appears on the UI.
@@ -363,6 +359,13 @@ class DAG:
     # doesn't correctly track/notice that they have default values (it gives errors about `Missing positional
     # argument "description" in call to "DAG"`` etc), so for init=True args we use the `default=Factory()`
     # style
+
+    def __rich_repr__(self):
+        yield "dag_id", self.dag_id
+        yield "schedule", self.schedule
+        yield "#tasks", len(self.tasks)
+
+    __rich_repr__.angular = True  # type: ignore[attr-defined]
 
     # NOTE: When updating arguments here, please also keep arguments in @dag()
     # below in sync. (Search for 'def dag(' in this file.)
@@ -418,7 +421,7 @@ class DAG:
     tags: MutableSet[str] = attrs.field(factory=set, converter=_convert_tags)
     owner_links: dict[str, str] = attrs.field(factory=dict)
     auto_register: bool = attrs.field(default=True, converter=bool)
-    fail_stop: bool = attrs.field(default=False, converter=bool)
+    fail_fast: bool = attrs.field(default=False, converter=bool)
     dag_display_name: str = attrs.field(
         default=attrs.Factory(_default_dag_display_name, takes_self=True),
         validator=attrs.validators.instance_of(str),
@@ -431,6 +434,7 @@ class DAG:
     )
 
     fileloc: str = attrs.field(init=False, factory=_default_fileloc)
+    relative_fileloc: str | None = attrs.field(init=False, default=None)
     partial: bool = attrs.field(init=False, default=False)
 
     edge_info: dict[str, dict[str, EdgeInfoType]] = attrs.field(init=False, factory=dict)
@@ -492,8 +496,6 @@ class DAG:
 
     @timetable.default
     def _default_timetable(instance: DAG):
-        from airflow.sdk.definitions.asset import AssetAll
-
         schedule = instance.schedule
         # TODO: Once
         # delattr(self, "schedule")
@@ -502,8 +504,10 @@ class DAG:
         elif isinstance(schedule, BaseAsset):
             return AssetTriggeredTimetable(schedule)
         elif isinstance(schedule, Collection) and not isinstance(schedule, str):
-            if not all(isinstance(x, (Asset, AssetAlias)) for x in schedule):
-                raise ValueError("All elements in 'schedule' should be assets or asset aliases")
+            if not all(isinstance(x, BaseAsset) for x in schedule):
+                raise ValueError(
+                    "All elements in 'schedule' should be either assets, asset references, or asset aliases"
+                )
             return AssetTriggeredTimetable(AssetAll(*schedule))
         else:
             return _create_timetable(schedule, instance.timezone)
@@ -565,13 +569,13 @@ class DAG:
         return hash(tuple(hash_components))
 
     def __enter__(self) -> Self:
-        from airflow.sdk.definitions.contextmanager import DagContext
+        from airflow.sdk.definitions._internal.contextmanager import DagContext
 
         DagContext.push(self)
         return self
 
     def __exit__(self, _type, _value, _tb):
-        from airflow.sdk.definitions.contextmanager import DagContext
+        from airflow.sdk.definitions._internal.contextmanager import DagContext
 
         _ = DagContext.pop()
 
@@ -648,10 +652,6 @@ class DAG:
         """
         return ", ".join({t.owner for t in self.tasks})
 
-    @property
-    def allow_future_exec_dates(self) -> bool:
-        return settings.ALLOW_FUTURE_LOGICAL_DATES and not self.timetable.can_be_scheduled
-
     def resolve_template_files(self):
         for t in self.tasks:
             # TODO: TaskSDK: move this on to BaseOperator and remove the check?
@@ -660,7 +660,7 @@ class DAG:
 
     def get_template_env(self, *, force_sandboxed: bool = False) -> jinja2.Environment:
         """Build a Jinja2 environment."""
-        import airflow.templates
+        from airflow.sdk.definitions._internal.templater import NativeEnvironment, SandboxedEnvironment
 
         # Collect directories to search for template files
         searchpath = [self.folder]
@@ -678,9 +678,9 @@ class DAG:
             jinja_env_options.update(self.jinja_environment_kwargs)
         env: jinja2.Environment
         if self.render_template_as_native_obj and not force_sandboxed:
-            env = airflow.templates.NativeEnvironment(**jinja_env_options)
+            env = NativeEnvironment(**jinja_env_options)
         else:
-            env = airflow.templates.SandboxedEnvironment(**jinja_env_options)
+            env = SandboxedEnvironment(**jinja_env_options)
 
         # Add any user defined items. Safe to edit globals as long as no templates are rendered yet.
         # http://jinja.pocoo.org/docs/2.10/api/#jinja2.Environment.globals
@@ -896,7 +896,7 @@ class DAG:
         """
         # FailStopDagInvalidTriggerRule.check(dag=self, trigger_rule=task.trigger_rule)
 
-        from airflow.sdk.definitions.contextmanager import TaskGroupContext
+        from airflow.sdk.definitions._internal.contextmanager import TaskGroupContext
 
         # if the task has no start date, assign it the same as the DAG
         if not task.start_date:
@@ -932,7 +932,7 @@ class DAG:
             # Add task_id to used_group_ids to prevent group_id and task_id collisions.
             self.task_group.used_group_ids.add(task_id)
 
-        FailStopDagInvalidTriggerRule.check(fail_stop=self.fail_stop, trigger_rule=task.trigger_rule)
+        FailFastDagInvalidTriggerRule.check(fail_fast=self.fail_fast, trigger_rule=task.trigger_rule)
 
     def add_tasks(self, tasks: Iterable[Operator]) -> None:
         """
@@ -1026,7 +1026,7 @@ DAG._DAG__serialized_fields = frozenset(a.name for a in attrs.fields(DAG)) - {  
     "has_on_success_callback",
     "has_on_failure_callback",
     "auto_register",
-    "fail_stop",
+    "fail_fast",
     "schedule",
 }
 
@@ -1062,7 +1062,7 @@ if TYPE_CHECKING:
         tags: Collection[str] | None = None,
         owner_links: dict[str, str] | None = None,
         auto_register: bool = True,
-        fail_stop: bool = False,
+        fail_fast: bool = False,
         dag_display_name: str | None = None,
     ) -> Callable[[Callable], Callable[..., DAG]]:
         """

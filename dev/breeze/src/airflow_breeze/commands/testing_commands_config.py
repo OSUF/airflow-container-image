@@ -51,22 +51,13 @@ TEST_ENVIRONMENT_DB: dict[str, str | list[str]] = {
 TEST_PARALLELISM_OPTIONS: dict[str, str | list[str]] = {
     "name": "Options for parallel test commands",
     "options": [
-        "--parallelism",
-        "--skip-cleanup",
-        "--debug-resources",
-        "--include-success-outputs",
-    ],
-}
-
-TEST_PARALLELISM_OPTIONS_XDIST: dict[str, str | list[str]] = {
-    "name": "Options for parallel test commands",
-    "options": [
         "--run-in-parallel",
         "--use-xdist",
         "--parallelism",
         "--skip-cleanup",
         "--debug-resources",
         "--include-success-outputs",
+        "--total-test-timeout",
     ],
 }
 
@@ -84,7 +75,6 @@ TEST_ADVANCED_FLAGS: dict[str, str | list[str]] = {
     "name": "Advanced flag for tests command",
     "options": [
         "--github-repository",
-        "--image-tag",
         "--mount-sources",
         "--skip-docker-compose-down",
         "--keep-env-variables",
@@ -131,41 +121,6 @@ TEST_PARAMS: list[dict[str, str | list[str]]] = [
             "--skip-db-tests",
         ],
     },
-    TEST_ENVIRONMENT_DB,
-    TEST_PARALLELISM_OPTIONS_XDIST,
-    TEST_UPGRADING_PACKAGES,
-]
-
-TEST_PARAMS_NON_DB: list[dict[str, str | list[str]]] = [
-    {
-        "name": "Select test types to run",
-        "options": [
-            "--parallel-test-types",
-            "--excluded-parallel-test-types",
-        ],
-    },
-    TEST_OPTIONS_NON_DB,
-    {
-        "name": "Test environment",
-        "options": [
-            "--python",
-            "--forward-credentials",
-            "--force-sa-warnings",
-        ],
-    },
-    TEST_PARALLELISM_OPTIONS,
-    TEST_UPGRADING_PACKAGES,
-]
-
-TEST_PARAMS_DB: list[dict[str, str | list[str]]] = [
-    {
-        "name": "Select tests to run",
-        "options": [
-            "--parallel-test-types",
-            "--excluded-parallel-test-types",
-        ],
-    },
-    TEST_OPTIONS_DB,
     TEST_ENVIRONMENT_DB,
     TEST_PARALLELISM_OPTIONS,
     TEST_UPGRADING_PACKAGES,
@@ -223,7 +178,6 @@ TESTING_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             ],
         },
         TEST_ADVANCED_FLAGS,
-        TEST_PARALLELISM_OPTIONS,
     ],
     "breeze testing core-integration-tests": [
         TEST_OPTIONS_DB,
@@ -256,7 +210,6 @@ TESTING_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             "name": "Advanced flag for helm-test command",
             "options": [
                 "--github-repository",
-                "--image-tag",
                 "--mount-sources",
             ],
         },
@@ -266,7 +219,6 @@ TESTING_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             "name": "Docker-compose tests flag",
             "options": [
                 "--image-name",
-                "--image-tag",
                 "--python",
                 "--skip-docker-compose-deletion",
                 "--github-repository",
@@ -278,7 +230,6 @@ TESTING_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             "name": "Advanced flag for tests command",
             "options": [
                 "--github-repository",
-                "--image-tag",
                 "--skip-docker-compose-down",
                 "--keep-env-variables",
             ],

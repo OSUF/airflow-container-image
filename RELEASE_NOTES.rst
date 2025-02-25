@@ -21,6 +21,106 @@
 
 .. towncrier release notes start
 
+Airflow 2.10.5 (2025-02-10)
+---------------------------
+
+Significant Changes
+^^^^^^^^^^^^^^^^^^^
+
+Ensure teardown tasks are executed when DAG run is set to failed (#45530)
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Previously when a DAG run was manually set to "failed" or to "success" state the terminal state was set to all tasks.
+But this was a gap for cases when setup- and teardown tasks were defined: If teardown was used to clean-up infrastructure
+or other resources, they were also skipped and thus resources could stay allocated.
+
+As of now when setup tasks had been executed before and the DAG is manually set to "failed" or "success" then teardown
+tasks are executed. Teardown tasks are skipped if the setup was also skipped.
+
+As a side effect this means if the DAG contains teardown tasks, then the manual marking of DAG as "failed" or "success"
+will need to keep the DAG in running state to ensure that teardown tasks will be scheduled. They would not be scheduled
+if the DAG is directly set to "failed" or "success".
+
+
+Bug Fixes
+"""""""""
+
+- Prevent using ``trigger_rule=TriggerRule.ALWAYS`` in a task-generated mapping within bare tasks (#44751)
+- Fix ShortCircuitOperator mapped tasks (#44912)
+- Fix premature evaluation of tasks with certain trigger rules (e.g. ``ONE_DONE``) in a mapped task group (#44937)
+- Fix task_id validation in BaseOperator (#44938) (#44938)
+- Allow fetching XCom with forward slash from the API and escape it in the UI (#45134)
+- Fix ``FileTaskHandler`` only read from default executor (#46000)
+- Fix empty task instance for log (#45702) (#45703)
+- Remove ``skip_if`` and ``run_if`` decorators before TaskFlow virtualenv tasks are run (#41832) (#45680)
+- Fix request body for json requests in event log (#45546) (#45560)
+- Ensure teardown tasks are executed when DAG run is set to failed (#45530) (#45581)
+- Do not update DR on TI update after task execution (#45348)
+- Fix object and array DAG params that have a None default (#45313) (#45315)
+- Fix endless sensor rescheduling (#45224) (#45250)
+- Evaluate None in SQLAlchemy's extended JSON type decorator (#45119) (#45120)
+- Allow dynamic tasks to be filtered by ``rendered_map_index`` (#45109) (#45122)
+- Handle relative paths when sanitizing URLs (#41995) (#45080)
+- Set Autocomplete Off on Login Form (#44929) (#44940)
+- Add Webserver parameters ``max_form_parts``, ``max_form_memory_size`` (#46243) (#45749)
+- Fixed accessing thread local variable in BaseOperators ``execute`` safeguard mechanism (#44646) (#46280)
+- Add map_index parameter to extra links API (#46337)
+
+
+Miscellaneous
+"""""""""""""
+
+- Add traceback log output when SIGTERMs was sent (#44880) (#45077)
+- Removed the ability for Operators to specify their own "scheduling deps" (#45713) (#45742)
+- Deprecate ``conf`` from Task Context (#44993)
+
+
+Airflow 2.10.4 (2024-12-16)
+---------------------------
+
+Significant Changes
+^^^^^^^^^^^^^^^^^^^
+
+TaskInstance ``priority_weight`` is capped in 32-bit signed integer ranges (#43611)
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Some database engines are limited to 32-bit integer values. As some users reported errors in
+weight rolled-over to negative values, we decided to cap the value to the 32-bit integer. Even
+if internally in python smaller or larger values to 64 bit are supported, ``priority_weight`` is
+capped and only storing values from -2147483648 to 2147483647.
+
+Bug Fixes
+^^^^^^^^^
+
+- Fix stats of dynamic mapped tasks after automatic retries of failed tasks (#44300)
+- Fix wrong display of multi-line messages in the log after filtering (#44457)
+- Allow "/" in metrics validator (#42934) (#44515)
+- Fix gantt flickering (#44488) (#44517)
+- Fix problem with inability to remove fields from Connection form (#40421) (#44442)
+- Check pool_slots on partial task import instead of execution (#39724) (#42693)
+- Avoid grouping task instance stats by try_number for dynamic mapped tasks (#44300) (#44319)
+- Re-queue task when they are stuck in queued (#43520) (#44158)
+- Suppress the warnings where we check for sensitive values (#44148) (#44167)
+- Fix get_task_instance_try_details to return appropriate schema (#43830) (#44133)
+- Log message source details are grouped (#43681) (#44070)
+- Fix duplication of Task tries in the UI (#43891) (#43950)
+- Add correct mime-type in OpenAPI spec (#43879) (#43901)
+- Disable extra links button if link is null or empty (#43844) (#43851)
+- Disable XCom list ordering by execution_date (#43680) (#43696)
+- Fix venv numpy example which needs to be 1.26 at least to be working in Python 3.12 (#43659)
+- Fix Try Selector in Mapped Tasks also on Index 0 (#43590) (#43591)
+- Prevent using ``trigger_rule="always"`` in a dynamic mapped task (#43810)
+- Prevent using ``trigger_rule=TriggerRule.ALWAYS`` in a task-generated mapping within bare tasks (#44751)
+
+Doc Only Changes
+""""""""""""""""
+- Update XCom docs around containers/helm (#44570) (#44573)
+
+Miscellaneous
+"""""""""""""
+- Raise deprecation warning when accessing inlet or outlet events through str (#43922)
+
+
 Airflow 2.10.3 (2024-11-05)
 ---------------------------
 
@@ -174,7 +274,6 @@ Scarf based telemetry: Airflow now collect telemetry data (#39510)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 Airflow integrates Scarf to collect basic usage data during operation. Deployments can opt-out of data collection by
 setting the ``[usage_data_collection]enabled`` option to ``False``, or the ``SCARF_ANALYTICS=false`` environment variable.
-See :ref:`Usage data collection FAQ <usage-data-collection>` for more information.
 
 Datasets no longer trigger inactive DAGs (#38891)
 """""""""""""""""""""""""""""""""""""""""""""""""

@@ -25,10 +25,10 @@ import pytest
 from dateutil.tz import UTC
 
 from airflow.decorators import task_group
-from airflow.lineage.entities import File
 from airflow.models import DagBag
 from airflow.models.asset import AssetDagRunQueue, AssetEvent, AssetModel
-from airflow.operators.empty import EmptyOperator
+from airflow.providers.common.compat.lineage.entities import File
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.sdk.definitions.asset import Asset
 from airflow.utils import timezone
 from airflow.utils.state import DagRunState, TaskInstanceState
@@ -232,7 +232,6 @@ def test_one_run(admin_client, dag_with_runs: list[DagRun], session):
                 "data_interval_start": "2016-01-01T00:00:00+00:00",
                 "end_date": timezone.utcnow().isoformat(),
                 "logical_date": "2016-01-01T00:00:00+00:00",
-                "external_trigger": False,
                 "last_scheduling_decision": None,
                 "note": None,
                 "queued_at": None,
@@ -249,7 +248,6 @@ def test_one_run(admin_client, dag_with_runs: list[DagRun], session):
                 "data_interval_start": "2016-01-02T00:00:00+00:00",
                 "end_date": None,
                 "logical_date": "2016-01-02T00:00:00+00:00",
-                "external_trigger": False,
                 "last_scheduling_decision": None,
                 "note": None,
                 "queued_at": None,

@@ -33,6 +33,7 @@ from airflow.configuration import conf
 from airflow.decorators import task as task_decorator
 from airflow.models import DagRun, Variable
 from airflow.models.renderedtifields import RenderedTaskInstanceFields as RTIF
+from airflow.models.taskmap import TaskMap
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.utils.task_instance_session import set_current_task_instance_session
@@ -95,24 +96,29 @@ class TestRenderedTaskInstanceFields:
         self.clean_db()
 
     @pytest.mark.parametrize(
-        "templated_field, expected_rendered_field",
+        ["templated_field", "expected_rendered_field"],
         [
-            (None, None),
-            ([], []),
-            ({}, {}),
-            ("test-string", "test-string"),
-            ({"foo": "bar"}, {"foo": "bar"}),
-            ("{{ task.task_id }}", "test"),
+            pytest.param(None, None, id="None"),
+            pytest.param([], [], id="list"),
+            pytest.param({}, {}, id="empty_dict"),
+            pytest.param((), "()", id="empty_tuple"),
+            pytest.param(set(), "set()", id="empty_set"),
+            pytest.param("test-string", "test-string", id="string"),
+            pytest.param({"foo": "bar"}, {"foo": "bar"}, id="dict"),
+            pytest.param(("foo", "bar"), "('foo', 'bar')", id="tuple"),
+            pytest.param({"foo"}, "{'foo'}", id="set"),
+            pytest.param("{{ task.task_id }}", "test", id="templated_string"),
             (date(2018, 12, 6), "2018-12-06"),
-            (datetime(2018, 12, 6, 10, 55), "2018-12-06 10:55:00+00:00"),
-            (
+            pytest.param(datetime(2018, 12, 6, 10, 55), "2018-12-06 10:55:00+00:00", id="datetime"),
+            pytest.param(
                 ClassWithCustomAttributes(
                     att1="{{ task.task_id }}", att2="{{ task.task_id }}", template_fields=["att1"]
                 ),
                 "ClassWithCustomAttributes({'att1': 'test', 'att2': '{{ task.task_id }}', "
                 "'template_fields': ['att1']})",
+                id="class_with_custom_attributes",
             ),
-            (
+            pytest.param(
                 ClassWithCustomAttributes(
                     nested1=ClassWithCustomAttributes(
                         att1="{{ task.task_id }}", att2="{{ task.task_id }}", template_fields=["att1"]
@@ -127,14 +133,17 @@ class TestRenderedTaskInstanceFields:
                 "'nested2': ClassWithCustomAttributes("
                 "{'att3': '{{ task.task_id }}', 'att4': '{{ task.task_id }}', 'template_fields': ['att3']}), "
                 "'template_fields': ['nested1']})",
+                id="nested_class_with_custom_attributes",
             ),
-            (
+            pytest.param(
                 "a" * 5000,
                 f"Truncated. You can change this behaviour in [core]max_templated_field_length. {('a'*5000)[:max_length-79]!r}... ",
+                id="large_string",
             ),
-            (
+            pytest.param(
                 LargeStrObject(),
                 f"Truncated. You can change this behaviour in [core]max_templated_field_length. {str(LargeStrObject())[:max_length-79]!r}... ",
+                id="large_object",
             ),
         ],
     )
@@ -281,7 +290,7 @@ class TestRenderedTaskInstanceFields:
                     run_id=f"run_{num}", logical_date=dag.start_date + timedelta(days=num)
                 )
 
-                mapped.expand_mapped_task(dr.run_id, session=dag_maker.session)
+                TaskMap.expand_mapped_task(mapped, dr.run_id, session=dag_maker.session)
                 session.refresh(dr)
                 for ti in dr.task_instances:
                     ti.task = dag.get_task(ti.task_id)
@@ -359,30 +368,38 @@ class TestRenderedTaskInstanceFields:
         )
 
     @mock.patch.dict(os.environ, {"AIRFLOW_VAR_API_KEY": "secret"})
-    @mock.patch("airflow.utils.log.secrets_masker.redact", autospec=True)
-    def test_redact(self, redact, dag_maker):
-        with dag_maker("test_ritf_redact", serialized=True):
-            task = BashOperator(
-                task_id="test",
-                bash_command="echo {{ var.value.api_key }}",
-                env={"foo": "secret", "other_api_key": "masked based on key name"},
-            )
-        dr = dag_maker.create_dagrun()
-        redact.side_effect = [
-            # Order depends on order in Operator template_fields
-            "val 1",  # bash_command
-            "val 2",  # env
-            "val 3",  # cwd
-        ]
+    def test_redact(self, dag_maker):
+        from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
-        ti = dr.task_instances[0]
-        ti.task = task
-        rtif = RTIF(ti=ti)
-        assert rtif.rendered_fields == {
-            "bash_command": "val 1",
-            "env": "val 2",
-            "cwd": "val 3",
-        }
+        target = (
+            "airflow.sdk.execution_time.secrets_masker.redact"
+            if AIRFLOW_V_3_0_PLUS
+            else "airflow.utils.log.secrets_masker.mask_secret.redact"
+        )
+
+        with mock.patch(target, autospec=True) as redact:
+            with dag_maker("test_ritf_redact", serialized=True):
+                task = BashOperator(
+                    task_id="test",
+                    bash_command="echo {{ var.value.api_key }}",
+                    env={"foo": "secret", "other_api_key": "masked based on key name"},
+                )
+            dr = dag_maker.create_dagrun()
+            redact.side_effect = [
+                # Order depends on order in Operator template_fields
+                "val 1",  # bash_command
+                "val 2",  # env
+                "val 3",  # cwd
+            ]
+
+            ti = dr.task_instances[0]
+            ti.task = task
+            rtif = RTIF(ti=ti)
+            assert rtif.rendered_fields == {
+                "bash_command": "val 1",
+                "env": "val 2",
+                "cwd": "val 3",
+            }
 
     def test_rtif_deletion_stale_data_error(self, dag_maker, session):
         """

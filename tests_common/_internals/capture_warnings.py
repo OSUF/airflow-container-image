@@ -28,12 +28,15 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import pytest
-from typing_extensions import Literal
 
-WhenTypeDef = Literal["config", "collect", "runtest"]
+if TYPE_CHECKING:
+    from typing import Literal
+
+    WhenTypeDef = Literal["config", "collect", "runtest"]
+
 TESTS_DIR = Path(__file__).parents[1].resolve()
 
 
@@ -117,12 +120,12 @@ class CapturedWarning:
         There is an assumption that airflow and all dependencies set it correct eventually.
         But we should not use it to filter it out, only for show in different groups.
         """
-        if self.filename.startswith("airflow/"):
-            return "airflow"
-        elif self.filename.startswith("providers/src/"):
-            return "providers"
-        elif self.filename.startswith("tests/") or self.filename.startswith("providers/tests/"):
+        if "/tests/" in self.filename:
             return "tests"
+        elif self.filename.startswith("airflow/"):
+            return "airflow"
+        elif self.filename.startswith("providers/"):
+            return "providers"
         return "other"
 
     def dumps(self) -> str:

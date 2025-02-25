@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
 import selectors
@@ -27,29 +28,48 @@ from io import BytesIO
 from operator import attrgetter
 from time import sleep
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import psutil
 import pytest
+from pytest_unordered import unordered
 from uuid6 import uuid7
 
+from airflow.executors.workloads import BundleInfo
+from airflow.listeners import hookimpl
+from airflow.listeners.listener import get_listener_manager
 from airflow.sdk.api import client as sdk_client
 from airflow.sdk.api.client import ServerResponseError
-from airflow.sdk.api.datamodels._generated import TaskInstance
+from airflow.sdk.api.datamodels._generated import AssetProfile, TaskInstance, TerminalTIState
 from airflow.sdk.execution_time.comms import (
+    AssetResult,
     ConnectionResult,
     DeferTask,
+    GetAssetByName,
+    GetAssetByUri,
     GetConnection,
+    GetPrevSuccessfulDagRun,
     GetVariable,
     GetXCom,
+    OKResponse,
+    PrevSuccessfulDagRunResult,
+    PutVariable,
+    RescheduleTask,
+    RuntimeCheckOnTask,
+    SetRenderedFields,
+    SetXCom,
+    SucceedTask,
+    TaskState,
     VariableResult,
     XComResult,
 )
-from airflow.sdk.execution_time.supervisor import WatchedSubprocess, supervise
-from airflow.utils import timezone as tz
+from airflow.sdk.execution_time.supervisor import ActivitySubprocess, supervise
+from airflow.sdk.execution_time.task_runner import CommsDecoder
+from airflow.utils import timezone, timezone as tz
 
 from task_sdk.tests.api.test_client import make_client
+from task_sdk.tests.execution_time.test_task_runner import FAKE_BUNDLE
 
 if TYPE_CHECKING:
     import kgb
@@ -60,6 +80,20 @@ TI_ID = uuid7()
 def lineno():
     """Returns the current line number in our program."""
     return inspect.currentframe().f_back.f_lineno
+
+
+def local_dag_bundle_cfg(path, name="my-bundle"):
+    return {
+        "AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST": json.dumps(
+            [
+                {
+                    "name": name,
+                    "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle",
+                    "kwargs": {"path": str(path), "refresh_interval": 1},
+                }
+            ]
+        )
+    }
 
 
 @pytest.mark.usefixtures("disable_capturing")
@@ -92,9 +126,10 @@ class TestWatchedSubprocess:
         instant = tz.datetime(2024, 11, 7, 12, 34, 56, 78901)
         time_machine.move_to(instant, tick=False)
 
-        proc = WatchedSubprocess.start(
-            path=os.devnull,
-            ti=TaskInstance(
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=TaskInstance(
                 id="4d828a62-a417-4936-a7a6-2b3fabacecab",
                 task_id="b",
                 dag_id="c",
@@ -108,44 +143,46 @@ class TestWatchedSubprocess:
         rc = proc.wait()
 
         assert rc == 0
-        assert captured_logs == [
-            {
-                "chan": "stdout",
-                "event": "I'm a short message",
-                "level": "info",
-                "logger": "task",
-                "timestamp": "2024-11-07T12:34:56.078901Z",
-            },
-            {
-                "chan": "stderr",
-                "event": "stderr message",
-                "level": "error",
-                "logger": "task",
-                "timestamp": "2024-11-07T12:34:56.078901Z",
-            },
-            {
-                "chan": "stdout",
-                "event": "Message split across two writes",
-                "level": "info",
-                "logger": "task",
-                "timestamp": "2024-11-07T12:34:56.078901Z",
-            },
-            {
-                "event": "An error message",
-                "level": "error",
-                "logger": "airflow.foobar",
-                "timestamp": instant.replace(tzinfo=None),
-            },
-            {
-                "category": "UserWarning",
-                "event": "Warning should be captured too",
-                "filename": __file__,
-                "level": "warning",
-                "lineno": line,
-                "logger": "py.warnings",
-                "timestamp": instant.replace(tzinfo=None),
-            },
-        ]
+        assert captured_logs == unordered(
+            [
+                {
+                    "chan": "stdout",
+                    "event": "I'm a short message",
+                    "level": "info",
+                    "logger": "task",
+                    "timestamp": "2024-11-07T12:34:56.078901Z",
+                },
+                {
+                    "chan": "stderr",
+                    "event": "stderr message",
+                    "level": "error",
+                    "logger": "task",
+                    "timestamp": "2024-11-07T12:34:56.078901Z",
+                },
+                {
+                    "chan": "stdout",
+                    "event": "Message split across two writes",
+                    "level": "info",
+                    "logger": "task",
+                    "timestamp": "2024-11-07T12:34:56.078901Z",
+                },
+                {
+                    "event": "An error message",
+                    "level": "error",
+                    "logger": "airflow.foobar",
+                    "timestamp": instant.replace(tzinfo=None),
+                },
+                {
+                    "category": "UserWarning",
+                    "event": "Warning should be captured too",
+                    "filename": __file__,
+                    "level": "warning",
+                    "lineno": line,
+                    "logger": "py.warnings",
+                    "timestamp": instant.replace(tzinfo=None),
+                },
+            ]
+        )
 
     def test_subprocess_sigkilled(self):
         main_pid = os.getpid()
@@ -157,9 +194,10 @@ class TestWatchedSubprocess:
             assert os.getpid() != main_pid
             os.kill(os.getpid(), signal.SIGKILL)
 
-        proc = WatchedSubprocess.start(
-            path=os.devnull,
-            ti=TaskInstance(
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=TaskInstance(
                 id="4d828a62-a417-4936-a7a6-2b3fabacecab",
                 task_id="b",
                 dag_id="c",
@@ -180,15 +218,10 @@ class TestWatchedSubprocess:
             # or import error for instance - a very early exception
             raise RuntimeError("Fake syntax error")
 
-        proc = WatchedSubprocess.start(
-            path=os.devnull,
-            ti=TaskInstance(
-                id=uuid7(),
-                task_id="b",
-                dag_id="c",
-                run_id="d",
-                try_number=1,
-            ),
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=TaskInstance(id=uuid7(), task_id="b", dag_id="c", run_id="d", try_number=1),
             client=MagicMock(spec=sdk_client.Client),
             target=subprocess_main,
         )
@@ -201,7 +234,7 @@ class TestWatchedSubprocess:
         assert "Last chance exception handler" in captured.err
         assert "RuntimeError: Fake syntax error" in captured.err
 
-    def test_regular_heartbeat(self, spy_agency: kgb.SpyAgency, monkeypatch):
+    def test_regular_heartbeat(self, spy_agency: kgb.SpyAgency, monkeypatch, mocker, make_ti_context):
         """Test that the WatchedSubprocess class regularly sends heartbeat requests, up to a certain frequency"""
         import airflow.sdk.execution_time.supervisor
 
@@ -215,16 +248,13 @@ class TestWatchedSubprocess:
                 sleep(0.05)
 
         ti_id = uuid7()
+        _ = mocker.patch.object(sdk_client.TaskInstanceOperations, "start", return_value=make_ti_context())
+
         spy = spy_agency.spy_on(sdk_client.TaskInstanceOperations.heartbeat)
-        proc = WatchedSubprocess.start(
-            path=os.devnull,
-            ti=TaskInstance(
-                id=ti_id,
-                task_id="b",
-                dag_id="c",
-                run_id="d",
-                try_number=1,
-            ),
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=TaskInstance(id=ti_id, task_id="b", dag_id="c", run_id="d", try_number=1),
             client=sdk_client.Client(base_url="", dry_run=True, token=""),
             target=subprocess_main,
         )
@@ -233,13 +263,13 @@ class TestWatchedSubprocess:
         # The exact number we get will depend on timing behaviour, so be a little lenient
         assert 1 <= len(spy.calls) <= 4
 
-    def test_run_simple_dag(self, test_dags_dir, captured_logs, time_machine):
+    def test_run_simple_dag(self, test_dags_dir, captured_logs, time_machine, mocker, make_ti_context):
         """Test running a simple DAG in a subprocess and capturing the output."""
 
         instant = tz.datetime(2024, 11, 7, 12, 34, 56, 78901)
         time_machine.move_to(instant, tick=False)
 
-        dagfile_path = test_dags_dir / "super_basic_run.py"
+        dagfile_path = test_dags_dir
         ti = TaskInstance(
             id=uuid7(),
             task_id="hello",
@@ -247,8 +277,24 @@ class TestWatchedSubprocess:
             run_id="c",
             try_number=1,
         )
-        # Assert Exit Code is 0
-        assert supervise(ti=ti, dag_path=dagfile_path, token="", server="", dry_run=True) == 0
+
+        # Create a mock client to assert calls to the client
+        # We assume the implementation of the client is correct and only need to check the calls
+        mock_client = mocker.Mock(spec=sdk_client.Client)
+        mock_client.task_instances.start.return_value = make_ti_context()
+
+        bundle_info = BundleInfo(name="my-bundle", version=None)
+        with patch.dict(os.environ, local_dag_bundle_cfg(test_dags_dir, bundle_info.name)):
+            exit_code = supervise(
+                ti=ti,
+                dag_rel_path=dagfile_path,
+                token="",
+                server="",
+                dry_run=True,
+                client=mock_client,
+                bundle_info=bundle_info,
+            )
+            assert exit_code == 0, captured_logs
 
         # We should have a log from the task!
         assert {
@@ -259,6 +305,67 @@ class TestWatchedSubprocess:
             "timestamp": "2024-11-07T12:34:56.078901Z",
         } in captured_logs
 
+    def test_supervise_handles_deferred_task(
+        self, test_dags_dir, captured_logs, time_machine, mocker, make_ti_context
+    ):
+        """
+        Test that the supervisor handles a deferred task correctly.
+
+        This includes ensuring the task starts and executes successfully, and that the task is deferred (via
+        the API client) with the expected parameters.
+        """
+        instant = tz.datetime(2024, 11, 7, 12, 34, 56, 0)
+
+        ti = TaskInstance(
+            id=uuid7(),
+            task_id="async",
+            dag_id="super_basic_deferred_run",
+            run_id="d",
+            try_number=1,
+        )
+
+        # Create a mock client to assert calls to the client
+        # We assume the implementation of the client is correct and only need to check the calls
+        mock_client = mocker.Mock(spec=sdk_client.Client)
+        mock_client.task_instances.start.return_value = make_ti_context()
+
+        time_machine.move_to(instant, tick=False)
+
+        bundle_info = BundleInfo(name="my-bundle", version=None)
+        with patch.dict(os.environ, local_dag_bundle_cfg(test_dags_dir, bundle_info.name)):
+            exit_code = supervise(
+                ti=ti,
+                dag_rel_path="super_basic_deferred_run.py",
+                token="",
+                client=mock_client,
+                bundle_info=bundle_info,
+            )
+        assert exit_code == 0, captured_logs
+
+        # Validate calls to the client
+        mock_client.task_instances.start.assert_called_once_with(ti.id, mocker.ANY, mocker.ANY)
+        mock_client.task_instances.heartbeat.assert_called_once_with(ti.id, pid=mocker.ANY)
+        mock_client.task_instances.defer.assert_called_once_with(
+            ti.id,
+            DeferTask(
+                classpath="airflow.providers.standard.triggers.temporal.DateTimeTrigger",
+                trigger_kwargs={"moment": "2024-11-07T12:34:59Z", "end_from_trigger": False},
+                next_method="execute_complete",
+            ),
+        )
+
+        # We are asserting the log messages here to ensure the task ran successfully
+        # and mainly to get the final state of the task matches one in the DB.
+        assert {
+            "exit_code": 0,
+            "duration": 0.0,
+            "final_state": "deferred",
+            "event": "Task finished",
+            "timestamp": mocker.ANY,
+            "level": "info",
+            "logger": "supervisor",
+        } in captured_logs
+
     def test_supervisor_handles_already_running_task(self):
         """Test that Supervisor prevents starting a Task Instance that is already running."""
         ti = TaskInstance(id=uuid7(), task_id="b", dag_id="c", run_id="d", try_number=1)
@@ -267,7 +374,7 @@ class TestWatchedSubprocess:
         # The API Server would return a 409 Conflict status code if the TI is not
         # in a "queued" state.
         def handle_request(request: httpx.Request) -> httpx.Response:
-            if request.url.path == f"/task-instances/{ti.id}/state":
+            if request.url.path == f"/task-instances/{ti.id}/run":
                 return httpx.Response(
                     409,
                     json={
@@ -282,7 +389,7 @@ class TestWatchedSubprocess:
         client = make_client(transport=httpx.MockTransport(handle_request))
 
         with pytest.raises(ServerResponseError, match="Server returned error") as err:
-            WatchedSubprocess.start(path=os.devnull, ti=ti, client=client)
+            ActivitySubprocess.start(dag_rel_path=os.devnull, bundle_info=FAKE_BUNDLE, what=ti, client=client)
 
         assert err.value.response.status_code == 409
         assert err.value.detail == {
@@ -292,7 +399,7 @@ class TestWatchedSubprocess:
         }
 
     @pytest.mark.parametrize("captured_logs", [logging.ERROR], indirect=True, ids=["log_level=error"])
-    def test_state_conflict_on_heartbeat(self, captured_logs, monkeypatch, mocker):
+    def test_state_conflict_on_heartbeat(self, captured_logs, monkeypatch, mocker, make_ti_context_dict):
         """
         Test that ensures that the Supervisor does not cause the task to fail if the Task Instance is no longer
         in the running state. Instead, it logs the error and terminates the task process if it
@@ -300,11 +407,14 @@ class TestWatchedSubprocess:
         """
         import airflow.sdk.execution_time.supervisor
 
-        monkeypatch.setattr(airflow.sdk.execution_time.supervisor, "MIN_HEARTBEAT_INTERVAL", 0.1)
+        # Heartbeat every time around the loop
+        monkeypatch.setattr(airflow.sdk.execution_time.supervisor, "MIN_HEARTBEAT_INTERVAL", 0.0)
 
         def subprocess_main():
             sys.stdin.readline()
             sleep(5)
+            # Shouldn't get here
+            exit(5)
 
         ti_id = uuid7()
 
@@ -327,27 +437,30 @@ class TestWatchedSubprocess:
                             "current_state": "success",
                         },
                     )
-            # Return a 204 for all other requests like the initial call to mark the task as running
+            elif request.url.path == f"/task-instances/{ti_id}/run":
+                return httpx.Response(200, json=make_ti_context_dict())
+            # Return a 204 for all other requests
             return httpx.Response(status_code=204)
 
-        proc = WatchedSubprocess.start(
-            path=os.devnull,
-            ti=TaskInstance(id=ti_id, task_id="b", dag_id="c", run_id="d", try_number=1),
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            what=TaskInstance(id=ti_id, task_id="b", dag_id="c", run_id="d", try_number=1),
             client=make_client(transport=httpx.MockTransport(handle_request)),
             target=subprocess_main,
+            bundle_info=FAKE_BUNDLE,
         )
 
         # Wait for the subprocess to finish -- it should have been terminated
         assert proc.wait() == -signal.SIGTERM
 
-        # Verify the number of requests made
         assert request_count["count"] == 2
+        # Verify the number of requests made
         assert captured_logs == [
             {
                 "detail": {
-                    "current_state": "success",
-                    "message": "TI is no longer in the running state and task should terminate",
                     "reason": "not_running",
+                    "message": "TI is no longer in the running state and task should terminate",
+                    "current_state": "success",
                 },
                 "event": "Server indicated the task shouldn't be running anymore",
                 "level": "error",
@@ -383,12 +496,13 @@ class TestWatchedSubprocess:
         # Patch the kill method at the class level so we can assert it was called with the correct signal
         mock_kill = mocker.patch("airflow.sdk.execution_time.supervisor.WatchedSubprocess.kill")
 
-        proc = WatchedSubprocess(
-            ti_id=TI_ID,
+        proc = ActivitySubprocess(
+            id=TI_ID,
             pid=mock_process.pid,
             stdin=mocker.MagicMock(),
             client=client,
             process=mock_process,
+            requests_fd=-1,
         )
 
         time_now = tz.datetime(2024, 11, 28, 12, 0, 0)
@@ -431,6 +545,177 @@ class TestWatchedSubprocess:
             "timestamp": mocker.ANY,
         } in captured_logs
 
+    @pytest.mark.parametrize(
+        ["terminal_state", "task_end_time_monotonic", "overtime_threshold", "expected_kill"],
+        [
+            pytest.param(
+                None,
+                15.0,
+                10,
+                False,
+                id="no_terminal_state",
+            ),
+            pytest.param(TerminalTIState.SUCCESS, 15.0, 10, False, id="below_threshold"),
+            pytest.param(TerminalTIState.SUCCESS, 9.0, 10, True, id="above_threshold"),
+            pytest.param(TerminalTIState.FAILED, 9.0, 10, True, id="above_threshold_failed_state"),
+            pytest.param(TerminalTIState.SKIPPED, 9.0, 10, True, id="above_threshold_skipped_state"),
+            pytest.param(TerminalTIState.SUCCESS, None, 20, False, id="task_end_datetime_none"),
+        ],
+    )
+    def test_overtime_handling(
+        self,
+        mocker,
+        terminal_state,
+        task_end_time_monotonic,
+        overtime_threshold,
+        expected_kill,
+        monkeypatch,
+    ):
+        """Test handling of overtime under various conditions."""
+        # Mocking logger since we are only interested that it is called with the expected message
+        # and not the actual log output
+        mock_logger = mocker.patch("airflow.sdk.execution_time.supervisor.log")
+
+        # Mock the kill method at the class level so we can assert it was called with the correct signal
+        mock_kill = mocker.patch("airflow.sdk.execution_time.supervisor.WatchedSubprocess.kill")
+
+        # Mock the current monotonic time
+        mocker.patch("time.monotonic", return_value=20.0)
+
+        # Patch the task overtime threshold
+        monkeypatch.setattr(ActivitySubprocess, "TASK_OVERTIME_THRESHOLD", overtime_threshold)
+
+        mock_watched_subprocess = ActivitySubprocess(
+            id=TI_ID,
+            pid=12345,
+            stdin=mocker.Mock(),
+            process=mocker.Mock(),
+            client=mocker.Mock(),
+            requests_fd=-1,
+        )
+
+        # Set the terminal state and task end datetime
+        mock_watched_subprocess._terminal_state = terminal_state
+        mock_watched_subprocess._task_end_time_monotonic = task_end_time_monotonic
+
+        # Call `wait` to trigger the overtime handling
+        # This will call the `kill` method if the task has been running for too long
+        mock_watched_subprocess._handle_process_overtime_if_needed()
+
+        # Validate process kill behavior and log messages
+        if expected_kill:
+            mock_kill.assert_called_once_with(signal.SIGTERM, force=True)
+            mock_logger.warning.assert_called_once_with(
+                "Workload success overtime reached; terminating process",
+                ti_id=TI_ID,
+            )
+        else:
+            mock_kill.assert_not_called()
+            mock_logger.warning.assert_not_called()
+
+
+class TestListenerOvertime:
+    @pytest.fixture(autouse=True)
+    def clean_listener_manager(self):
+        get_listener_manager().clear()
+        yield
+        get_listener_manager().clear()
+
+    class TimeoutListener:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        @hookimpl
+        def on_task_instance_success(self):
+            from time import sleep
+
+            sleep(self.timeout)
+
+        @hookimpl
+        def on_task_instance_failed(self):
+            from time import sleep
+
+            sleep(self.timeout)
+
+    @pytest.mark.parametrize(
+        ["dag_id", "task_id", "overtime_threshold", "expected_timeout", "listener"],
+        [
+            pytest.param(
+                "super_basic_run",
+                "hello",
+                2.0,
+                True,
+                TimeoutListener(5.0),
+            ),
+            pytest.param(
+                "super_basic_run",
+                "hello",
+                5.0,
+                False,
+                TimeoutListener(2.0),
+            ),
+        ],
+    )
+    def test_overtime_slow_listener_instance(
+        self,
+        dag_id,
+        task_id,
+        overtime_threshold,
+        expected_timeout,
+        listener,
+        monkeypatch,
+        test_dags_dir,
+        captured_logs,
+    ):
+        """Test handling of overtime under various conditions."""
+        monkeypatch.setattr(ActivitySubprocess, "TASK_OVERTIME_THRESHOLD", overtime_threshold)
+
+        """Test running a simple DAG in a subprocess and capturing the output."""
+
+        get_listener_manager().add_listener(listener)
+        dagfile_path = test_dags_dir
+        ti = TaskInstance(
+            id=uuid7(),
+            task_id=task_id,
+            dag_id=dag_id,
+            run_id="fd",
+            try_number=1,
+        )
+        bundle_info = BundleInfo(name="my-bundle", version=None)
+        with patch.dict(os.environ, local_dag_bundle_cfg(test_dags_dir, bundle_info.name)):
+            exit_code = supervise(
+                ti=ti,
+                dag_rel_path=dagfile_path,
+                token="",
+                server="",
+                dry_run=True,
+                bundle_info=bundle_info,
+            )
+            assert captured_logs
+            print(json.dumps(captured_logs, indent=4, default=str))
+            assert exit_code == 0
+
+        if expected_timeout:
+            assert any(
+                [
+                    event["event"] == "Workload success overtime reached; terminating process"
+                    for event in captured_logs
+                ]
+            )
+            assert any(
+                [
+                    event["event"] == "Process exited" and event["signal"] == "SIGTERM"
+                    for event in captured_logs
+                ]
+            )
+        else:
+            assert all(
+                [
+                    event["event"] != "Workload success overtime reached; terminating process"
+                    for event in captured_logs
+                ]
+            )
+
 
 class TestWatchedSubprocessKill:
     @pytest.fixture
@@ -441,12 +726,13 @@ class TestWatchedSubprocessKill:
 
     @pytest.fixture
     def watched_subprocess(self, mocker, mock_process):
-        proc = WatchedSubprocess(
-            ti_id=TI_ID,
+        proc = ActivitySubprocess(
+            id=TI_ID,
             pid=12345,
             stdin=mocker.Mock(),
             client=mocker.Mock(),
             process=mock_process,
+            requests_fd=-1,
         )
         # Mock the selector
         mock_selector = mocker.Mock(spec=selectors.DefaultSelector)
@@ -455,133 +741,6 @@ class TestWatchedSubprocessKill:
         # Set the selector on the process
         proc.selector = mock_selector
         return proc
-
-    @pytest.mark.parametrize(
-        ["signal_to_send", "wait_side_effect", "expected_signals"],
-        [
-            pytest.param(
-                signal.SIGINT,
-                [0],
-                [signal.SIGINT],
-                id="SIGINT-success-without-escalation",
-            ),
-            pytest.param(
-                signal.SIGINT,
-                [psutil.TimeoutExpired(0.1), 0],
-                [signal.SIGINT, signal.SIGTERM],
-                id="SIGINT-escalates-to-SIGTERM",
-            ),
-            pytest.param(
-                signal.SIGINT,
-                [
-                    psutil.TimeoutExpired(0.1),  # SIGINT times out
-                    psutil.TimeoutExpired(0.1),  # SIGTERM times out
-                    0,  # SIGKILL succeeds
-                ],
-                [signal.SIGINT, signal.SIGTERM, signal.SIGKILL],
-                id="SIGINT-escalates-to-SIGTERM-then-SIGKILL",
-            ),
-            pytest.param(
-                signal.SIGTERM,
-                [
-                    psutil.TimeoutExpired(0.1),  # SIGTERM times out
-                    0,  # SIGKILL succeeds
-                ],
-                [signal.SIGTERM, signal.SIGKILL],
-                id="SIGTERM-escalates-to-SIGKILL",
-            ),
-            pytest.param(
-                signal.SIGKILL,
-                [0],
-                [signal.SIGKILL],
-                id="SIGKILL-success-without-escalation",
-            ),
-        ],
-    )
-    def test_force_kill_escalation(
-        self,
-        watched_subprocess,
-        mock_process,
-        mocker,
-        signal_to_send,
-        wait_side_effect,
-        expected_signals,
-        captured_logs,
-    ):
-        """Test escalation path for SIGINT, SIGTERM, and SIGKILL when force=True."""
-        # Mock the process wait method to return the exit code or raise an exception
-        mock_process.wait.side_effect = wait_side_effect
-
-        watched_subprocess.kill(signal_to_send=signal_to_send, escalation_delay=0.1, force=True)
-
-        # Check that the correct signals were sent
-        mock_process.send_signal.assert_has_calls([mocker.call(sig) for sig in expected_signals])
-
-        # Check that the process was waited on for each signal
-        mock_process.wait.assert_has_calls([mocker.call(timeout=0)] * len(expected_signals))
-
-        ## Validate log messages
-        # If escalation occurred, we should see a warning log for each signal sent
-        if len(expected_signals) > 1:
-            assert {
-                "event": "Process did not terminate in time; escalating",
-                "level": "warning",
-                "logger": "supervisor",
-                "pid": 12345,
-                "signal": expected_signals[-2].name,
-                "timestamp": mocker.ANY,
-            } in captured_logs
-
-        # Regardless of escalation, we should see an info log for the final signal sent
-        assert {
-            "event": "Process exited",
-            "level": "info",
-            "logger": "supervisor",
-            "pid": 12345,
-            "signal": expected_signals[-1].name,
-            "exit_code": 0,
-            "timestamp": mocker.ANY,
-        } in captured_logs
-
-        # Validate `selector.select` calls
-        assert watched_subprocess.selector.select.call_count == len(expected_signals)
-        watched_subprocess.selector.select.assert_has_calls(
-            [mocker.call(timeout=0.1)] * len(expected_signals)
-        )
-
-        assert watched_subprocess._exit_code == 0
-
-    def test_force_kill_with_selector_events(self, watched_subprocess, mock_process, mocker):
-        """Test force escalation with selector events handled during wait."""
-        # Mock selector to return events during escalation
-        mock_key = mocker.Mock()
-        mock_key.fileobj = mocker.Mock()
-
-        # Simulate EOF
-        mock_key.data = mocker.Mock(return_value=False)
-
-        watched_subprocess.selector.select.side_effect = [
-            [(mock_key, None)],  # Event during SIGINT
-            [],  # No event during SIGTERM
-            [(mock_key, None)],  # Event during SIGKILL
-        ]
-
-        mock_process.wait.side_effect = [
-            psutil.TimeoutExpired(0.1),  # SIGINT times out
-            psutil.TimeoutExpired(0.1),  # SIGTERM times out
-            0,  # SIGKILL succeeds
-        ]
-
-        watched_subprocess.kill(signal.SIGINT, escalation_delay=0.1, force=True)
-
-        # Validate selector interactions
-        assert watched_subprocess.selector.select.call_count == 3
-        mock_key.data.assert_has_calls([mocker.call(mock_key.fileobj), mocker.call(mock_key.fileobj)])
-
-        # Validate signal escalation
-        mock_process.send_signal.assert_has_calls(
-            [mocker.call(signal.SIGINT), mocker.call(signal.SIGTERM), mocker.call(signal.SIGKILL)]
-        )
 
     def test_kill_process_already_exited(self, watched_subprocess, mock_process):
         """Test behavior when the process has already exited."""
@@ -602,6 +761,110 @@ class TestWatchedSubprocessKill:
 
         mock_process.send_signal.assert_called_once_with(signal_to_send)
         mock_process.wait.assert_called_once_with(timeout=0)
+
+    @pytest.mark.parametrize(
+        ["signal_to_send", "exit_after"],
+        [
+            pytest.param(
+                signal.SIGINT,
+                signal.SIGINT,
+                id="SIGINT-success-without-escalation",
+            ),
+            pytest.param(
+                signal.SIGINT,
+                signal.SIGTERM,
+                id="SIGINT-escalates-to-SIGTERM",
+            ),
+            pytest.param(
+                signal.SIGINT,
+                None,
+                id="SIGINT-escalates-to-SIGTERM-then-SIGKILL",
+            ),
+            pytest.param(
+                signal.SIGTERM,
+                None,
+                id="SIGTERM-escalates-to-SIGKILL",
+            ),
+            pytest.param(
+                signal.SIGKILL,
+                None,
+                id="SIGKILL-success-without-escalation",
+            ),
+        ],
+    )
+    def test_kill_escalation_path(self, signal_to_send, exit_after, mocker, captured_logs, monkeypatch):
+        def subprocess_main():
+            import signal
+
+            def _handler(sig, frame):
+                print(f"Signal {sig} received", file=sys.stderr)
+                if exit_after == sig:
+                    sleep(0.1)
+                    exit(sig)
+                sleep(5)
+                print("Should not get here")
+
+            signal.signal(signal.SIGINT, _handler)
+            signal.signal(signal.SIGTERM, _handler)
+            try:
+                sys.stdin.readline()
+                print("Ready")
+                sleep(10)
+            except Exception as e:
+                print(e)
+            # Shouldn't get here
+            exit(5)
+
+        ti_id = uuid7()
+
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=TaskInstance(id=ti_id, task_id="b", dag_id="c", run_id="d", try_number=1),
+            client=MagicMock(spec=sdk_client.Client),
+            target=subprocess_main,
+        )
+        # Ensure we get one normal run, to give the proc time to register it's custom sighandler
+        proc._service_subprocess(max_wait_time=1)
+        proc.kill(signal_to_send=signal_to_send, escalation_delay=0.5, force=True)
+
+        # Wait for the subprocess to finish
+        assert proc.wait() == exit_after or -signal.SIGKILL
+        exit_after = exit_after or signal.SIGKILL
+
+        logs = [{"event": m["event"], "chan": m.get("chan"), "logger": m["logger"]} for m in captured_logs]
+        expected_logs = [
+            {"chan": "stdout", "event": "Ready", "logger": "task"},
+        ]
+        # Work out what logs we expect to see
+        if signal_to_send == signal.SIGINT:
+            expected_logs.append({"chan": "stderr", "event": "Signal 2 received", "logger": "task"})
+        if signal_to_send == signal.SIGTERM or (
+            signal_to_send == signal.SIGINT and exit_after != signal.SIGINT
+        ):
+            if signal_to_send == signal.SIGINT:
+                expected_logs.append(
+                    {
+                        "chan": None,
+                        "event": "Process did not terminate in time; escalating",
+                        "logger": "supervisor",
+                    }
+                )
+            expected_logs.append({"chan": "stderr", "event": "Signal 15 received", "logger": "task"})
+        if exit_after == signal.SIGKILL:
+            if signal_to_send in {signal.SIGINT, signal.SIGTERM}:
+                expected_logs.append(
+                    {
+                        "chan": None,
+                        "event": "Process did not terminate in time; escalating",
+                        "logger": "supervisor",
+                    }
+                )
+            # expected_logs.push({"chan": "stderr", "event": "Signal 9 received", "logger": "task"})
+            ...
+
+        expected_logs.extend(({"chan": None, "event": "Process exited", "logger": "supervisor"},))
+        assert logs == expected_logs
 
     def test_service_subprocess(self, watched_subprocess, mock_process, mocker):
         """Test `_service_subprocess` processes selector events and handles subprocess exit."""
@@ -646,48 +909,243 @@ class TestHandleRequest:
     @pytest.fixture
     def watched_subprocess(self, mocker):
         """Fixture to provide a WatchedSubprocess instance."""
-        return WatchedSubprocess(
-            ti_id=TI_ID,
+        return ActivitySubprocess(
+            id=TI_ID,
             pid=12345,
             stdin=BytesIO(),
             client=mocker.Mock(),
             process=mocker.Mock(),
+            requests_fd=-1,
         )
 
     @pytest.mark.parametrize(
-        ["message", "expected_buffer", "client_attr_path", "method_arg", "mock_response"],
+        ["message", "expected_buffer", "client_attr_path", "method_arg", "method_kwarg", "mock_response"],
         [
             pytest.param(
                 GetConnection(conn_id="test_conn"),
-                b'{"conn_id":"test_conn","conn_type":"mysql"}\n',
+                b'{"conn_id":"test_conn","conn_type":"mysql","type":"ConnectionResult"}\n',
                 "connections.get",
                 ("test_conn",),
+                {},
                 ConnectionResult(conn_id="test_conn", conn_type="mysql"),
                 id="get_connection",
             ),
             pytest.param(
+                GetConnection(conn_id="test_conn"),
+                b'{"conn_id":"test_conn","conn_type":"mysql","schema":"mysql","type":"ConnectionResult"}\n',
+                "connections.get",
+                ("test_conn",),
+                {},
+                ConnectionResult(conn_id="test_conn", conn_type="mysql", schema="mysql"),  # type: ignore[call-arg]
+                id="get_connection_with_alias",
+            ),
+            pytest.param(
                 GetVariable(key="test_key"),
-                b'{"key":"test_key","value":"test_value"}\n',
+                b'{"key":"test_key","value":"test_value","type":"VariableResult"}\n',
                 "variables.get",
                 ("test_key",),
+                {},
                 VariableResult(key="test_key", value="test_value"),
                 id="get_variable",
             ),
             pytest.param(
-                GetXCom(dag_id="test_dag", run_id="test_run", task_id="test_task", key="test_key"),
-                b'{"key":"test_key","value":"test_value"}\n',
-                "xcoms.get",
-                ("test_dag", "test_run", "test_task", "test_key", -1),
-                XComResult(key="test_key", value="test_value"),
-                id="get_xcom",
+                PutVariable(key="test_key", value="test_value", description="test_description"),
+                b"",
+                "variables.set",
+                ("test_key", "test_value", "test_description"),
+                {},
+                {"ok": True},
+                id="set_variable",
             ),
             pytest.param(
                 DeferTask(next_method="execute_callback", classpath="my-classpath"),
                 b"",
                 "task_instances.defer",
                 (TI_ID, DeferTask(next_method="execute_callback", classpath="my-classpath")),
+                {},
                 "",
                 id="patch_task_instance_to_deferred",
+            ),
+            pytest.param(
+                RescheduleTask(
+                    reschedule_date=timezone.parse("2024-10-31T12:00:00Z"),
+                    end_date=timezone.parse("2024-10-31T12:00:00Z"),
+                ),
+                b"",
+                "task_instances.reschedule",
+                (
+                    TI_ID,
+                    RescheduleTask(
+                        reschedule_date=timezone.parse("2024-10-31T12:00:00Z"),
+                        end_date=timezone.parse("2024-10-31T12:00:00Z"),
+                    ),
+                ),
+                {},
+                "",
+                id="patch_task_instance_to_up_for_reschedule",
+            ),
+            pytest.param(
+                GetXCom(dag_id="test_dag", run_id="test_run", task_id="test_task", key="test_key"),
+                b'{"key":"test_key","value":"test_value","type":"XComResult"}\n',
+                "xcoms.get",
+                ("test_dag", "test_run", "test_task", "test_key", None),
+                {},
+                XComResult(key="test_key", value="test_value"),
+                id="get_xcom",
+            ),
+            pytest.param(
+                GetXCom(
+                    dag_id="test_dag", run_id="test_run", task_id="test_task", key="test_key", map_index=2
+                ),
+                b'{"key":"test_key","value":"test_value","type":"XComResult"}\n',
+                "xcoms.get",
+                ("test_dag", "test_run", "test_task", "test_key", 2),
+                {},
+                XComResult(key="test_key", value="test_value"),
+                id="get_xcom_map_index",
+            ),
+            pytest.param(
+                GetXCom(dag_id="test_dag", run_id="test_run", task_id="test_task", key="test_key"),
+                b'{"key":"test_key","value":null,"type":"XComResult"}\n',
+                "xcoms.get",
+                ("test_dag", "test_run", "test_task", "test_key", None),
+                {},
+                XComResult(key="test_key", value=None, type="XComResult"),
+                id="get_xcom_not_found",
+            ),
+            pytest.param(
+                SetXCom(
+                    dag_id="test_dag",
+                    run_id="test_run",
+                    task_id="test_task",
+                    key="test_key",
+                    value='{"key": "test_key", "value": {"key2": "value2"}}',
+                ),
+                b"",
+                "xcoms.set",
+                (
+                    "test_dag",
+                    "test_run",
+                    "test_task",
+                    "test_key",
+                    '{"key": "test_key", "value": {"key2": "value2"}}',
+                    None,
+                ),
+                {},
+                {"ok": True},
+                id="set_xcom",
+            ),
+            pytest.param(
+                SetXCom(
+                    dag_id="test_dag",
+                    run_id="test_run",
+                    task_id="test_task",
+                    key="test_key",
+                    value='{"key": "test_key", "value": {"key2": "value2"}}',
+                    map_index=2,
+                ),
+                b"",
+                "xcoms.set",
+                (
+                    "test_dag",
+                    "test_run",
+                    "test_task",
+                    "test_key",
+                    '{"key": "test_key", "value": {"key2": "value2"}}',
+                    2,
+                ),
+                {},
+                {"ok": True},
+                id="set_xcom_with_map_index",
+            ),
+            # we aren't adding all states under TerminalTIState here, because this test's scope is only to check
+            # if it can handle TaskState message
+            pytest.param(
+                TaskState(state=TerminalTIState.SKIPPED, end_date=timezone.parse("2024-10-31T12:00:00Z")),
+                b"",
+                "",
+                (),
+                {},
+                "",
+                id="patch_task_instance_to_skipped",
+            ),
+            pytest.param(
+                SetRenderedFields(rendered_fields={"field1": "rendered_value1", "field2": "rendered_value2"}),
+                b"",
+                "task_instances.set_rtif",
+                (TI_ID, {"field1": "rendered_value1", "field2": "rendered_value2"}),
+                {},
+                {"ok": True},
+                id="set_rtif",
+            ),
+            pytest.param(
+                GetAssetByName(name="asset"),
+                b'{"name":"asset","uri":"s3://bucket/obj","group":"asset","type":"AssetResult"}\n',
+                "assets.get",
+                [],
+                {"name": "asset"},
+                AssetResult(name="asset", uri="s3://bucket/obj", group="asset"),
+                id="get_asset_by_name",
+            ),
+            pytest.param(
+                GetAssetByUri(uri="s3://bucket/obj"),
+                b'{"name":"asset","uri":"s3://bucket/obj","group":"asset","type":"AssetResult"}\n',
+                "assets.get",
+                [],
+                {"uri": "s3://bucket/obj"},
+                AssetResult(name="asset", uri="s3://bucket/obj", group="asset"),
+                id="get_asset_by_uri",
+            ),
+            pytest.param(
+                SucceedTask(end_date=timezone.parse("2024-10-31T12:00:00Z")),
+                b"",
+                "task_instances.succeed",
+                (),
+                {
+                    "id": TI_ID,
+                    "outlet_events": None,
+                    "task_outlets": None,
+                    "when": timezone.parse("2024-10-31T12:00:00Z"),
+                },
+                "",
+                id="succeed_task",
+            ),
+            pytest.param(
+                GetPrevSuccessfulDagRun(ti_id=TI_ID),
+                (
+                    b'{"data_interval_start":"2025-01-10T12:00:00Z","data_interval_end":"2025-01-10T14:00:00Z",'
+                    b'"start_date":"2025-01-10T12:00:00Z","end_date":"2025-01-10T14:00:00Z",'
+                    b'"type":"PrevSuccessfulDagRunResult"}\n'
+                ),
+                "task_instances.get_previous_successful_dagrun",
+                (TI_ID,),
+                {},
+                PrevSuccessfulDagRunResult(
+                    start_date=timezone.parse("2025-01-10T12:00:00Z"),
+                    end_date=timezone.parse("2025-01-10T14:00:00Z"),
+                    data_interval_start=timezone.parse("2025-01-10T12:00:00Z"),
+                    data_interval_end=timezone.parse("2025-01-10T14:00:00Z"),
+                ),
+                id="get_prev_successful_dagrun",
+            ),
+            pytest.param(
+                RuntimeCheckOnTask(
+                    inlets=[AssetProfile(name="alias", uri="alias", asset_type="asset")],
+                    outlets=[AssetProfile(name="alias", uri="alias", asset_type="asset")],
+                ),
+                b'{"ok":true,"type":"OKResponse"}\n',
+                "task_instances.runtime_checks",
+                (),
+                {
+                    "id": TI_ID,
+                    "msg": RuntimeCheckOnTask(
+                        inlets=[AssetProfile(name="alias", uri="alias", asset_type="asset")],  # type: ignore
+                        outlets=[AssetProfile(name="alias", uri="alias", asset_type="asset")],  # type: ignore
+                        type="RuntimeCheckOnTask",
+                    ),
+                },
+                OKResponse(ok=True),
+                id="runtime_check_on_task",
             ),
         ],
     )
@@ -695,10 +1153,12 @@ class TestHandleRequest:
         self,
         watched_subprocess,
         mocker,
+        time_machine,
         message,
         expected_buffer,
         client_attr_path,
         method_arg,
+        method_kwarg,
         mock_response,
     ):
         """
@@ -710,8 +1170,8 @@ class TestHandleRequest:
             1. Sends the message to the subprocess.
             2. Verifies that the correct client method is called with the expected argument.
             3. Checks that the buffer is updated with the expected response.
+            4. Verifies that the response is correctly decoded.
         """
-
         # Mock the client method. E.g. `client.variables.get` or `client.connections.get`
         mock_client_method = attrgetter(client_attr_path)(watched_subprocess.client)
         mock_client_method.return_value = mock_response
@@ -722,9 +1182,23 @@ class TestHandleRequest:
         next(generator)
         msg = message.model_dump_json().encode() + b"\n"
         generator.send(msg)
+        time_machine.move_to(timezone.datetime(2024, 10, 31), tick=False)
 
         # Verify the correct client method was called
-        mock_client_method.assert_called_once_with(*method_arg)
+        if client_attr_path:
+            mock_client_method.assert_called_once_with(*method_arg, **method_kwarg)
 
         # Verify the response was added to the buffer
-        assert watched_subprocess.stdin.getvalue() == expected_buffer
+        val = watched_subprocess.stdin.getvalue()
+        assert val == expected_buffer
+
+        # Verify the response is correctly decoded
+        # This is important because the subprocess/task runner will read the response
+        # and deserialize it to the correct message type
+
+        # Only decode the buffer if it contains data. An empty buffer implies no response was written.
+        if val:
+            # Using BytesIO to simulate a readable stream for CommsDecoder.
+            input_stream = BytesIO(val)
+            decoder = CommsDecoder(input=input_stream)
+            assert decoder.get_message() == mock_response

@@ -17,6 +17,9 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from fastapi import Depends
 from sqlalchemy import and_, func, select
 
 from airflow.api_fastapi.common.db.common import (
@@ -24,6 +27,8 @@ from airflow.api_fastapi.common.db.common import (
     paginated_select,
 )
 from airflow.api_fastapi.common.parameters import (
+    FilterOptionEnum,
+    FilterParam,
     QueryDagDisplayNamePatternSearch,
     QueryDagIdPatternSearch,
     QueryLastDagRunStateFilter,
@@ -33,6 +38,7 @@ from airflow.api_fastapi.common.parameters import (
     QueryOwnersFilter,
     QueryPausedFilter,
     QueryTagsFilter,
+    filter_param_factory,
 )
 from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.core_api.datamodels.dag_run import DAGRunResponse
@@ -46,12 +52,16 @@ from airflow.models import DagModel, DagRun
 dags_router = AirflowRouter(prefix="/dags", tags=["Dags"])
 
 
-@dags_router.get("/recent_dag_runs", include_in_schema=False, response_model_exclude_none=True)
+@dags_router.get("/recent_dag_runs", response_model_exclude_none=True)
 def recent_dag_runs(
     limit: QueryLimit,
     offset: QueryOffset,
     tags: QueryTagsFilter,
     owners: QueryOwnersFilter,
+    dag_ids: Annotated[
+        FilterParam[list[str] | None],
+        Depends(filter_param_factory(DagRun.dag_id, list[str] | None, FilterOptionEnum.IN, "dag_ids")),
+    ],
     dag_id_pattern: QueryDagIdPatternSearch,
     dag_display_name_pattern: QueryDagDisplayNamePatternSearch,
     only_active: QueryOnlyActiveFilter,
@@ -64,39 +74,39 @@ def recent_dag_runs(
     recent_runs_subquery = (
         select(
             DagRun.dag_id,
-            DagRun.logical_date,
+            DagRun.run_after,
             func.rank()
             .over(
                 partition_by=DagRun.dag_id,
-                order_by=DagRun.logical_date.desc(),
+                order_by=DagRun.run_after.desc(),
             )
             .label("rank"),
         )
-        .order_by(DagRun.logical_date.desc())
+        .order_by(DagRun.run_after.desc())
         .subquery()
     )
     dags_with_recent_dag_runs_select = (
         select(
             DagRun,
             DagModel,
-            recent_runs_subquery.c.logical_date,
+            recent_runs_subquery.c.run_after,
         )
         .join(DagModel, DagModel.dag_id == recent_runs_subquery.c.dag_id)
         .join(
             DagRun,
             and_(
                 DagRun.dag_id == DagModel.dag_id,
-                DagRun.logical_date == recent_runs_subquery.c.logical_date,
+                DagRun.run_after == recent_runs_subquery.c.run_after,
             ),
         )
         .where(recent_runs_subquery.c.rank <= dag_runs_limit)
         .group_by(
             DagModel.dag_id,
-            recent_runs_subquery.c.logical_date,
-            DagRun.logical_date,
+            recent_runs_subquery.c.run_after,
+            DagRun.run_after,
             DagRun.id,
         )
-        .order_by(recent_runs_subquery.c.logical_date.desc())
+        .order_by(recent_runs_subquery.c.run_after.desc())
     )
     dags_with_recent_dag_runs_select_filter, _ = paginated_select(
         statement=dags_with_recent_dag_runs_select,
@@ -104,6 +114,7 @@ def recent_dag_runs(
             only_active,
             paused,
             dag_id_pattern,
+            dag_ids,
             dag_display_name_pattern,
             tags,
             owners,
@@ -125,7 +136,7 @@ def recent_dag_runs(
             dag_response = DAGResponse.model_validate(dag)
             dag_runs_by_dag_id[dag_id] = DAGWithLatestDagRunsResponse.model_validate(
                 {
-                    **dag_response.dict(),
+                    **dag_response.model_dump(),
                     "latest_dag_runs": [dag_run_response],
                 }
             )

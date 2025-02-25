@@ -22,6 +22,7 @@ from urllib.parse import quote_plus
 import pytest
 
 from airflow.api_connexion.exceptions import EXCEPTIONS_LINK_MAP
+from airflow.dag_processing.bundles.manager import DagBundlesManager
 from airflow.models.dag import DAG
 from airflow.models.dagbag import DagBag
 from airflow.models.xcom import XCom
@@ -29,16 +30,13 @@ from airflow.plugins_manager import AirflowPlugin
 from airflow.timetables.base import DataInterval
 from airflow.utils import timezone
 from airflow.utils.state import DagRunState
-from airflow.utils.types import DagRunType
+from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
 from tests_common.test_utils.api_connexion_utils import create_user, delete_user
-from tests_common.test_utils.compat import AIRFLOW_V_3_0_PLUS, BaseOperatorLink
+from tests_common.test_utils.compat import BaseOperatorLink
 from tests_common.test_utils.db import clear_db_runs, clear_db_xcom
 from tests_common.test_utils.mock_operators import CustomOperator
 from tests_common.test_utils.mock_plugins import mock_plugin_manager
-
-if AIRFLOW_V_3_0_PLUS:
-    from airflow.utils.types import DagRunTriggeredByType
 
 pytestmark = pytest.mark.db_test
 
@@ -72,19 +70,21 @@ class TestGetExtraLinks:
 
         self.dag = self._create_dag()
 
+        DagBundlesManager().sync_bundles_to_db()
         self.app.dag_bag = DagBag(os.devnull, include_examples=False)
         self.app.dag_bag.dags = {self.dag.dag_id: self.dag}
-        self.app.dag_bag.sync_to_db()
+        self.app.dag_bag.sync_to_db("dags-folder", None)
 
-        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
+        data_interval = DataInterval(timezone.datetime(2020, 1, 1), timezone.datetime(2020, 1, 2))
         self.dag.create_dagrun(
             run_id="TEST_DAG_RUN_ID",
             logical_date=self.default_time,
             run_type=DagRunType.MANUAL,
             state=DagRunState.SUCCESS,
             session=session,
-            data_interval=DataInterval(timezone.datetime(2020, 1, 1), timezone.datetime(2020, 1, 2)),
-            **triggered_by_kwargs,
+            data_interval=data_interval,
+            run_after=data_interval.end,
+            triggered_by=DagRunTriggeredByType.TEST,
         )
         session.flush()
 
@@ -143,6 +143,7 @@ class TestGetExtraLinks:
         )
         assert response.status_code == 403
 
+    @pytest.mark.skip(reason="Legacy API tests.")
     @mock_plugin_manager(plugins=[])
     def test_should_respond_200(self):
         XCom.set(
@@ -160,6 +161,7 @@ class TestGetExtraLinks:
         assert response.status_code == 200, response.data
         assert response.json == {"Google Custom": "http://google.com/custom_base_link?search=TEST_LINK_VALUE"}
 
+    @pytest.mark.skip(reason="Legacy API tests.")
     @mock_plugin_manager(plugins=[])
     def test_should_respond_200_missing_xcom(self):
         response = self.client.get(
@@ -170,6 +172,7 @@ class TestGetExtraLinks:
         assert response.status_code == 200, response.data
         assert response.json == {"Google Custom": None}
 
+    @pytest.mark.skip(reason="Legacy API tests.")
     @mock_plugin_manager(plugins=[])
     def test_should_respond_200_multiple_links(self):
         XCom.set(
@@ -190,6 +193,7 @@ class TestGetExtraLinks:
             "BigQuery Console #2": "https://console.cloud.google.com/bigquery?j=TEST_LINK_VALUE_2",
         }
 
+    @pytest.mark.skip(reason="Legacy API tests.")
     @mock_plugin_manager(plugins=[])
     def test_should_respond_200_multiple_links_missing_xcom(self):
         response = self.client.get(
@@ -200,21 +204,22 @@ class TestGetExtraLinks:
         assert response.status_code == 200, response.data
         assert response.json == {"BigQuery Console #1": None, "BigQuery Console #2": None}
 
+    @pytest.mark.skip(reason="Legacy API tests.")
     def test_should_respond_200_support_plugins(self):
         class GoogleLink(BaseOperatorLink):
             name = "Google"
 
-            def get_link(self, operator, dttm):
+            def get_link(self, operator, *, ti_key):
                 return "https://www.google.com"
 
         class S3LogLink(BaseOperatorLink):
             name = "S3"
             operators = [CustomOperator]
 
-            def get_link(self, operator, dttm):
+            def get_link(self, operator, *, ti_key):
                 return (
                     f"https://s3.amazonaws.com/airflow-logs/{operator.dag_id}/"
-                    f"{operator.task_id}/{quote_plus(dttm.isoformat())}"
+                    f"{operator.task_id}/{quote_plus(ti_key.run_id)}"
                 )
 
         class AirflowTestPlugin(AirflowPlugin):
@@ -236,8 +241,5 @@ class TestGetExtraLinks:
             assert response.json == {
                 "Google Custom": None,
                 "Google": "https://www.google.com",
-                "S3": (
-                    "https://s3.amazonaws.com/airflow-logs/"
-                    "TEST_DAG_ID/TEST_SINGLE_LINK/2020-01-01T00%3A00%3A00%2B00%3A00"
-                ),
+                "S3": "https://s3.amazonaws.com/airflow-logs/TEST_DAG_ID/TEST_SINGLE_LINK/TEST_DAG_RUN_ID",
             }

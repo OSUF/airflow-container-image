@@ -22,12 +22,14 @@ import sys
 from glob import glob
 from importlib import metadata as importlib_metadata
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from airflow.models import DagBag
+from airflow.hooks.base import BaseHook
+from airflow.models import Connection, DagBag
 from airflow.utils import yaml
 
 from tests_common.test_utils.asserts import assert_queries_count
@@ -35,15 +37,14 @@ from tests_common.test_utils.asserts import assert_queries_count
 AIRFLOW_SOURCES_ROOT = Path(__file__).resolve().parents[2]
 AIRFLOW_PROVIDERS_ROOT = AIRFLOW_SOURCES_ROOT / "airflow" / "providers"
 CURRENT_PYTHON_VERSION = f"{sys.version_info.major}.{sys.version_info.minor}"
-PROVIDERS_PREFIXES = ("providers/src/airflow/providers/", "providers/tests/system/")
+PROVIDERS_PREFIXES = ["providers/"]
 OPTIONAL_PROVIDERS_DEPENDENCIES: dict[str, dict[str, str | None]] = {
     # Some examples or system tests may depend on additional packages
     # that are not included in certain CI checks.
     # The format of the dictionary is as follows:
     # key: the regexp matching the file to be excluded,
     # value: a dictionary containing package distributions with an optional version specifier, e.g., >=2.3.4
-    ".*example_bedrock_retrieve_and_generate.py": {"opensearch-py": None},
-    ".*example_opensearch.py": {"opensearch-py": None},
+    # yandexcloud is automatically removed in case botocore is upgraded to latest
     r".*example_yandexcloud.*\.py": {"yandexcloud": None},
 }
 IGNORE_AIRFLOW_PROVIDER_DEPRECATION_WARNING: tuple[str, ...] = (
@@ -51,17 +52,17 @@ IGNORE_AIRFLOW_PROVIDER_DEPRECATION_WARNING: tuple[str, ...] = (
     # Generally, these should be resolved as soon as a parameter or operator is deprecated.
     # If the deprecation is postponed, the item should be added to this tuple,
     # and a corresponding Issue should be created on GitHub.
-    "providers/tests/system/google/cloud/bigquery/example_bigquery_operations.py",
-    "providers/tests/system/google/cloud/dataflow/example_dataflow_sql.py",
-    "providers/tests/system/google/cloud/dataproc/example_dataproc_gke.py",
-    "providers/tests/system/google/cloud/datapipelines/example_datapipeline.py",
-    "providers/tests/system/google/cloud/gcs/example_gcs_sensor.py",
-    "providers/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine.py",
-    "providers/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_async.py",
-    "providers/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_job.py",
-    "providers/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_kueue.py",
-    "providers/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_resource.py",
-    "providers/tests/system/google/cloud/life_sciences/example_life_sciences.py",
+    "providers/google/tests/system/google/cloud/bigquery/example_bigquery_operations.py",
+    "providers/google/tests/system/google/cloud/dataflow/example_dataflow_sql.py",
+    "providers/google/tests/system/google/cloud/dataproc/example_dataproc_gke.py",
+    "providers/google/tests/system/google/cloud/datapipelines/example_datapipeline.py",
+    "providers/google/tests/system/google/cloud/gcs/example_gcs_sensor.py",
+    "providers/google/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine.py",
+    "providers/google/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_async.py",
+    "providers/google/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_job.py",
+    "providers/google/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_kueue.py",
+    "providers/google/tests/system/google/cloud/kubernetes_engine/example_kubernetes_engine_resource.py",
+    "providers/google/tests/system/google/cloud/life_sciences/example_life_sciences.py",
     # Deprecated Operators/Hooks, which replaced by common.sql Operators/Hooks
 )
 
@@ -90,6 +91,7 @@ def get_suspended_providers_folders() -> list[str]:
             suspended_providers.append(
                 provider_path.parent.relative_to(AIRFLOW_SOURCES_ROOT)
                 .as_posix()
+                # TODO(potiuk): check
                 .replace("providers/src/airflow/providers/", "")
             )
     return suspended_providers
@@ -108,6 +110,7 @@ def get_python_excluded_providers_folders() -> list[str]:
             excluded_providers.append(
                 provider_path.parent.relative_to(AIRFLOW_SOURCES_ROOT)
                 .as_posix()
+                # TODO(potiuk): check
                 .replace("providers/src/airflow/providers/", "")
             )
     return excluded_providers
@@ -147,6 +150,12 @@ def example_not_excluded_dags(xfail_db_exception: bool = False):
             if candidate.startswith(tuple(current_python_excluded_providers_folders)):
                 param_marks.append(
                     pytest.mark.skip(reason=f"Not supported for Python {CURRENT_PYTHON_VERSION}")
+                )
+
+            # TODO: remove when context serialization is implemented in AIP-72
+            if "/example_python_context_" in candidate:
+                param_marks.append(
+                    pytest.mark.skip(reason="Temporary excluded until AIP-72 context serialization is done.")
                 )
 
             for optional, dependencies in OPTIONAL_PROVIDERS_DEPENDENCIES.items():
@@ -203,3 +212,21 @@ def test_should_not_do_database_queries(example: str):
             dag_folder=example,
             include_examples=False,
         )
+
+
+@pytest.mark.db_test
+@pytest.mark.parametrize("example", example_not_excluded_dags(xfail_db_exception=True))
+def test_should_not_run_hook_connections(example: str):
+    # Example dags should never run BaseHook.get_connection() class method when parsed
+    with patch.object(BaseHook, "get_connection") as mock_get_connection:
+        mock_get_connection.return_value = Connection()
+        DagBag(
+            dag_folder=example,
+            include_examples=False,
+        )
+    assert mock_get_connection.call_count == 0, (
+        f"BaseHook.get_connection() should not be called during DAG parsing. "
+        f"It was called {mock_get_connection.call_count} times. Please make sure that no "
+        "connections are created during DAG parsing. NOTE! Do not set conn_id to None to avoid it, just make "
+        "sure that you do not create connection object in the `__init__` method of your operator."
+    )

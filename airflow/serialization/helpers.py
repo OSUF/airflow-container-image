@@ -21,8 +21,8 @@ from __future__ import annotations
 from typing import Any
 
 from airflow.configuration import conf
+from airflow.sdk.execution_time.secrets_masker import redact
 from airflow.settings import json
-from airflow.utils.log.secrets_masker import redact
 
 
 def serialize_template_field(template_field: Any, name: str) -> str | dict | list | int | float:
@@ -36,10 +36,25 @@ def serialize_template_field(template_field: Any, name: str) -> str | dict | lis
     def is_jsonable(x):
         try:
             json.dumps(x)
+            if isinstance(x, tuple):
+                # Tuple is converted to list in json.dumps
+                # so while it is jsonable, it changes the type which might be a surprise
+                # for the user, so instead we return False here -- which will convert it to string
+                return False
         except (TypeError, OverflowError):
             return False
         else:
             return True
+
+    def translate_tuples_to_lists(obj: Any):
+        """Recursively convert tuples to lists."""
+        if isinstance(obj, tuple):
+            return [translate_tuples_to_lists(item) for item in obj]
+        elif isinstance(obj, list):
+            return [translate_tuples_to_lists(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: translate_tuples_to_lists(value) for key, value in obj.items()}
+        return obj
 
     max_length = conf.getint("core", "max_templated_field_length")
 
@@ -58,6 +73,7 @@ def serialize_template_field(template_field: Any, name: str) -> str | dict | lis
     else:
         if not template_field:
             return template_field
+        template_field = translate_tuples_to_lists(template_field)
         serialized = str(template_field)
         if len(serialized) > max_length:
             rendered = redact(serialized, name)

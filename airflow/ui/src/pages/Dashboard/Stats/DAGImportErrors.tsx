@@ -16,25 +16,22 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import {
-  Box,
-  Badge,
-  Text,
-  Button,
-  useDisclosure,
-  Skeleton,
-} from "@chakra-ui/react";
+import { Box, Text, Button, useDisclosure, Skeleton } from "@chakra-ui/react";
 import { FiChevronRight } from "react-icons/fi";
+import { LuFileWarning } from "react-icons/lu";
 
 import { useImportErrorServiceGetImportErrors } from "openapi/queries";
 import { ErrorAlert } from "src/components/ErrorAlert";
+import { StateBadge } from "src/components/StateBadge";
+import { pluralize } from "src/utils";
 
 import { DAGImportErrorsModal } from "./DAGImportErrorsModal";
 
-export const DAGImportErrors = () => {
+export const DAGImportErrors = ({ iconOnly = false }: { readonly iconOnly?: boolean }) => {
   const { onClose, onOpen, open } = useDisclosure();
 
   const { data, error, isLoading } = useImportErrorServiceGetImportErrors();
+
   const importErrorsCount = data?.total_entries ?? 0;
   const importErrors = data?.import_errors ?? [];
 
@@ -43,36 +40,43 @@ export const DAGImportErrors = () => {
   }
 
   return (
-    <Box alignItems="center" display="flex" gap={2}>
+    <Box alignItems="center" display="flex" maxH="10px">
       <ErrorAlert error={error} />
       {importErrorsCount > 0 && (
-        <Button
-          alignItems="center"
-          borderRadius="md"
-          display="flex"
-          gap={2}
-          onClick={onOpen}
-          variant="outline"
-        >
-          <Badge
-            background="red.solid"
-            borderRadius="full"
-            color="red.contrast"
-            px={2}
-          >
-            {importErrorsCount}
-          </Badge>
-          <Box alignItems="center" display="flex" gap={1}>
-            <Text fontWeight="bold">Dag Import Errors</Text>
-            <FiChevronRight />
-          </Box>
-        </Button>
+        <>
+          {iconOnly ? (
+            <StateBadge
+              as={Button}
+              colorPalette="failed"
+              height={7}
+              onClick={onOpen}
+              title={pluralize("Dag Import Error", importErrorsCount)}
+            >
+              <LuFileWarning size="0.5rem" />
+              {importErrorsCount}
+            </StateBadge>
+          ) : (
+            <Button
+              alignItems="center"
+              borderRadius="md"
+              display="flex"
+              gap={2}
+              onClick={onOpen}
+              variant="outline"
+            >
+              <StateBadge colorPalette="failed">
+                <LuFileWarning />
+                {importErrorsCount}
+              </StateBadge>
+              <Box alignItems="center" display="flex" gap={1}>
+                <Text fontWeight="bold">Dag Import Errors</Text>
+                <FiChevronRight />
+              </Box>
+            </Button>
+          )}
+          <DAGImportErrorsModal importErrors={importErrors} onClose={onClose} open={open} />
+        </>
       )}
-      <DAGImportErrorsModal
-        importErrors={importErrors}
-        onClose={onClose}
-        open={open}
-      />
     </Box>
   );
 };

@@ -114,6 +114,13 @@ class TestGetPools(TestPoolsEndpoint):
             # Sort
             ({"order_by": "-id"}, 3, [POOL2_NAME, POOL1_NAME, Pool.DEFAULT_POOL_NAME]),
             ({"order_by": "id"}, 3, [Pool.DEFAULT_POOL_NAME, POOL1_NAME, POOL2_NAME]),
+            # Search
+            (
+                {"pool_name_pattern": "~"},
+                3,
+                [Pool.DEFAULT_POOL_NAME, POOL1_NAME, POOL2_NAME],
+            ),
+            ({"pool_name_pattern": "default"}, 1, [Pool.DEFAULT_POOL_NAME]),
         ],
     )
     def test_should_respond_200(
@@ -143,63 +150,51 @@ class TestPatchPool(TestPoolsEndpoint):
             (
                 Pool.DEFAULT_POOL_NAME,
                 {"update_mask": ["description"]},
-                {},
+                {"pool": Pool.DEFAULT_POOL_NAME},
                 400,
                 {"detail": "Only slots and included_deferred can be modified on Default Pool"},
             ),
             (
                 "unknown_pool",
                 {},
-                {},
+                {"pool": "unknown_pool"},
                 404,
                 {"detail": "The Pool with name: `unknown_pool` was not found"},
+            ),
+            # Pool name can't be updated
+            (
+                POOL1_NAME,
+                {},
+                {"pool": "pool1_updated"},
+                400,
+                {"detail": "Invalid body, pool name from request body doesn't match uri parameter"},
             ),
             (
                 POOL1_NAME,
                 {},
-                {},
+                {"pool": POOL1_NAME},
                 422,
                 {
                     "detail": [
                         {
-                            "input": None,
-                            "loc": ["pool"],
-                            "msg": "Input should be a valid string",
-                            "type": "string_type",
-                        },
-                        {
-                            "input": None,
+                            "input": {"pool": POOL1_NAME},
                             "loc": ["slots"],
-                            "msg": "Input should be a valid integer",
-                            "type": "int_type",
+                            "msg": "Field required",
+                            "type": "missing",
                         },
                         {
-                            "input": None,
+                            "input": {"pool": POOL1_NAME},
+                            "loc": ["description"],
+                            "msg": "Field required",
+                            "type": "missing",
+                        },
+                        {
+                            "input": {"pool": POOL1_NAME},
                             "loc": ["include_deferred"],
-                            "msg": "Input should be a valid boolean",
-                            "type": "bool_type",
+                            "msg": "Field required",
+                            "type": "missing",
                         },
                     ],
-                },
-            ),
-            # Success
-            # Partial body
-            (
-                POOL1_NAME,
-                {"update_mask": ["name"]},
-                {"slots": 150, "name": "pool_1_updated"},
-                200,
-                {
-                    "deferred_slots": 0,
-                    "description": None,
-                    "include_deferred": True,
-                    "name": "pool_1_updated",
-                    "occupied_slots": 0,
-                    "open_slots": 3,
-                    "queued_slots": 0,
-                    "running_slots": 0,
-                    "scheduled_slots": 0,
-                    "slots": 3,
                 },
             ),
             # Partial body on default_pool
@@ -225,7 +220,7 @@ class TestPatchPool(TestPoolsEndpoint):
             (
                 Pool.DEFAULT_POOL_NAME,
                 {"update_mask": ["slots", "include_deferred"]},
-                {"slots": 150, "include_deferred": True},
+                {"pool": Pool.DEFAULT_POOL_NAME, "slots": 150, "include_deferred": True},
                 200,
                 {
                     "deferred_slots": 0,
@@ -247,7 +242,7 @@ class TestPatchPool(TestPoolsEndpoint):
                 {
                     "slots": 8,
                     "description": "Description Updated",
-                    "name": "pool_1_updated",
+                    "name": POOL1_NAME,
                     "include_deferred": False,
                 },
                 200,
@@ -255,7 +250,7 @@ class TestPatchPool(TestPoolsEndpoint):
                     "deferred_slots": 0,
                     "description": "Description Updated",
                     "include_deferred": False,
-                    "name": "pool_1_updated",
+                    "name": POOL1_NAME,
                     "occupied_slots": 0,
                     "open_slots": 8,
                     "queued_slots": 0,
@@ -349,7 +344,7 @@ class TestPostPool(TestPoolsEndpoint):
                     "deferred_slots": 0,
                 },
                 409,
-                {"detail": "Unique constraint violation"},
+                None,
             ),
         ],
     )
@@ -371,91 +366,348 @@ class TestPostPool(TestPoolsEndpoint):
         assert session.query(Pool).count() == n_pools + 1
         response = test_client.post("/public/pools", json=body)
         assert response.status_code == second_expected_status_code
-        assert response.json() == second_expected_response
+        if second_expected_status_code == 201:
+            assert response.json() == second_expected_response
+        else:
+            response_json = response.json()
+            assert "detail" in response_json
+            assert list(response_json["detail"].keys()) == ["reason", "statement", "orig_error"]
+
         assert session.query(Pool).count() == n_pools + 1
 
 
-class TestPostPools(TestPoolsEndpoint):
+class TestBulkPools(TestPoolsEndpoint):
+    @pytest.mark.enable_redact
     @pytest.mark.parametrize(
-        "body, expected_status_code, expected_response",
+        "actions, expected_results",
         [
+            # Test successful create
             (
                 {
-                    "pools": [
-                        {"name": "my_pool", "slots": 11},
-                        {"name": "my_pool2", "slots": 12},
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool3", "slots": 10, "description": "New Description"},
+                                {"name": "pool4", "slots": 20, "description": "New Description"},
+                            ],
+                            "action_on_existence": "fail",
+                        }
                     ]
                 },
-                201,
+                {"create": {"success": ["pool3", "pool4"], "errors": []}},
+            ),
+            # Test successful create with skip
+            (
                 {
-                    "pools": [
+                    "actions": [
                         {
-                            "name": "my_pool",
-                            "slots": 11,
-                            "description": None,
-                            "include_deferred": False,
-                            "occupied_slots": 0,
-                            "running_slots": 0,
-                            "queued_slots": 0,
-                            "scheduled_slots": 0,
-                            "open_slots": 11,
-                            "deferred_slots": 0,
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool3", "slots": 10, "description": "New Description"},
+                                {"name": "pool1", "slots": 20, "description": "New Description"},
+                            ],
+                            "action_on_existence": "skip",
+                        }
+                    ]
+                },
+                {"create": {"success": ["pool3"], "errors": []}},
+            ),
+            # Test successful create with overwrite
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool3", "slots": 10, "description": "New Description"},
+                                {"name": "pool2", "slots": 20, "description": "New Description"},
+                            ],
+                            "action_on_existence": "overwrite",
+                        }
+                    ]
+                },
+                {"create": {"success": ["pool3", "pool2"], "errors": []}},
+            ),
+            # Test create conflict
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [{"name": "pool2", "slots": 20, "description": "New Description"}],
+                            "action_on_existence": "fail",
+                        }
+                    ]
+                },
+                {
+                    "create": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool2'} already exist.",
+                                "status_code": 409,
+                            }
+                        ],
+                    }
+                },
+            ),
+            # Test successful update
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [{"name": "pool2", "slots": 10, "description": "New Description"}],
+                            "action_on_non_existence": "fail",
+                        }
+                    ]
+                },
+                {"update": {"success": ["pool2"], "errors": []}},
+            ),
+            # Test update with skip
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [{"name": "pool4", "slots": 20, "description": "New Description"}],
+                            "action_on_non_existence": "skip",
+                        }
+                    ]
+                },
+                {"update": {"success": [], "errors": []}},
+            ),
+            # Test update not found
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [{"name": "pool4", "slots": 10, "description": "New Description"}],
+                            "action_on_non_existence": "fail",
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool4'} were not found.",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+            ),
+            # Test successful delete
+            (
+                {"actions": [{"action": "delete", "entities": ["pool1"], "action_on_non_existence": "skip"}]},
+                {"delete": {"success": ["pool1"], "errors": []}},
+            ),
+            # Test delete with skip
+            (
+                {"actions": [{"action": "delete", "entities": ["pool3"], "action_on_non_existence": "skip"}]},
+                {"delete": {"success": [], "errors": []}},
+            ),
+            # Test delete not found
+            (
+                {"actions": [{"action": "delete", "entities": ["pool4"], "action_on_non_existence": "fail"}]},
+                {
+                    "delete": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool4'} were not found.",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+            ),
+            # Test Create, Update, and Delete combined
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [{"name": "pool6", "slots": 10, "description": "New Description"}],
+                            "action_on_existence": "skip",
                         },
                         {
-                            "name": "my_pool2",
-                            "slots": 12,
-                            "description": None,
-                            "include_deferred": False,
-                            "occupied_slots": 0,
-                            "running_slots": 0,
-                            "queued_slots": 0,
-                            "scheduled_slots": 0,
-                            "open_slots": 12,
-                            "deferred_slots": 0,
+                            "action": "update",
+                            "entities": [{"name": "pool1", "slots": 10, "description": "New Description"}],
+                            "action_on_non_existence": "fail",
                         },
-                    ],
-                    "total_entries": 2,
-                },
-            ),
-            (
-                {
-                    "pools": [
-                        {"name": "my_pool", "slots": 11},
-                        {"name": POOL1_NAME, "slots": 12},
+                        {"action": "delete", "entities": ["pool2"], "action_on_non_existence": "skip"},
                     ]
                 },
-                409,
-                {"detail": "Unique constraint violation"},
+                {
+                    "create": {"success": ["pool6"], "errors": []},
+                    "update": {"success": ["pool1"], "errors": []},
+                    "delete": {"success": ["pool2"], "errors": []},
+                },
             ),
+            # Test Fail on conflicting create and handle others
             (
                 {
-                    "pools": [
-                        {"name": POOL1_NAME, "slots": 11},
-                        {"name": POOL2_NAME, "slots": 12},
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [{"name": "pool1", "slots": 10, "description": "New Description"}],
+                            "action_on_existence": "fail",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [{"name": "pool1", "slots": 100, "description": "New Description"}],
+                            "action_on_non_existence": "fail",
+                        },
+                        {"action": "delete", "entities": ["pool4"], "action_on_non_existence": "skip"},
                     ]
                 },
-                409,
-                {"detail": "Unique constraint violation"},
+                {
+                    "create": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool1'} already exist.",
+                                "status_code": 409,
+                            }
+                        ],
+                    },
+                    "update": {"success": ["pool1"], "errors": []},
+                    "delete": {"success": [], "errors": []},
+                },
             ),
+            # Test all skipping actions
             (
                 {
-                    "pools": [
-                        {"name": "my_pool", "slots": 11},
-                        {"name": "my_pool", "slots": 12},
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [{"name": "pool1", "slots": 10, "description": "New Description"}],
+                            "action_on_existence": "skip",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [{"name": "pool5", "slots": 10, "description": "New Description"}],
+                            "action_on_non_existence": "skip",
+                        },
+                        {"action": "delete", "entities": ["pool5"], "action_on_non_existence": "skip"},
                     ]
                 },
-                409,
-                {"detail": "Unique constraint violation"},
+                {
+                    "create": {"success": [], "errors": []},
+                    "update": {"success": [], "errors": []},
+                    "delete": {"success": [], "errors": []},
+                },
+            ),
+            # Test Dependent actions
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [{"name": "pool5", "slots": 10, "description": "New Description"}],
+                            "action_on_existence": "fail",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [
+                                {"name": "pool5", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_non_existence": "fail",
+                        },
+                        {"action": "delete", "entities": ["pool5"], "action_on_non_existence": "fail"},
+                    ]
+                },
+                {
+                    "create": {"success": ["pool5"], "errors": []},
+                    "update": {"success": ["pool5"], "errors": []},
+                    "delete": {"success": ["pool5"], "errors": []},
+                },
+            ),
+            # Test Repeated actions
+            (
+                {
+                    "actions": [
+                        {
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool1", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_existence": "fail",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [
+                                {"name": "pool1", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_non_existence": "fail",
+                        },
+                        {
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool5", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_existence": "fail",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [
+                                {"name": "pool8", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_non_existence": "fail",
+                        },
+                        {"action": "delete", "entities": ["pool2"], "action_on_non_existence": "fail"},
+                        {
+                            "action": "create",
+                            "entities": [
+                                {"name": "pool6", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_existence": "fail",
+                        },
+                        {
+                            "action": "update",
+                            "entities": [
+                                {"name": "pool9", "slots": 100, "description": "New test Description"}
+                            ],
+                            "action_on_non_existence": "fail",
+                        },
+                    ]
+                },
+                {
+                    "create": {
+                        "success": ["pool5", "pool6"],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool1'} already exist.",
+                                "status_code": 409,
+                            }
+                        ],
+                    },
+                    "update": {
+                        "success": ["pool1"],
+                        "errors": [
+                            {
+                                "error": "The pools with these pool names: {'pool8'} were not found.",
+                                "status_code": 404,
+                            },
+                            {
+                                "error": "The pools with these pool names: {'pool9'} were not found.",
+                                "status_code": 404,
+                            },
+                        ],
+                    },
+                    "delete": {"success": ["pool2"], "errors": []},
+                },
             ),
         ],
     )
-    def test_post_pools(self, test_client, session, body, expected_status_code, expected_response):
+    def test_bulk_pools(self, test_client, actions, expected_results, session):
         self.create_pools()
-        n_pools = session.query(Pool).count()
-        response = test_client.post("/public/pools/bulk", json=body)
-        assert response.status_code == expected_status_code
-        assert response.json() == expected_response
-        if expected_status_code == 201:
-            assert session.query(Pool).count() == n_pools + 2
-        else:
-            assert session.query(Pool).count() == n_pools
+        response = test_client.patch("/public/pools", json=actions)
+        response_data = response.json()
+        for key, value in expected_results.items():
+            assert response_data[key] == value
