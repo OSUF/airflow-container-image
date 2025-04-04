@@ -6,7 +6,7 @@ CMD1=(
     docker build .
     --build-arg PYTHON_BASE_IMAGE="python:3.12-slim-bookworm"
     --build-arg AIRFLOW_VERSION=$AIRFLOW_VERSION
-    --build-arg AIRFLOW_EXTRAS="async,postgres,microsoft.azure,microsoft.mssql,sftp,opsgenie,snowflake,celery,amazon,redis,ldap,odbc,pandas"
+    --build-arg AIRFLOW_EXTRAS="async,postgres,microsoft.azure,microsoft.mssql,sftp,opsgenie,snowflake,celery,amazon,redis,ldap,odbc,pandas,dbt-cloud"
     --build-arg INSTALL_MYSQL_CLIENT="false"
     --build-arg ADDITIONAL_RUNTIME_APT_DEPS="sshpass"
     --tag "airflow-intermediate:test"
