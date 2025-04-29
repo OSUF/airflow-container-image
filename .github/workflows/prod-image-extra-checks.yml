@@ -40,16 +40,12 @@ on:  # yamllint disable-line rule:truthy
         description: "Whether to use uv to build the image (true/false)"
         required: true
         type: string
-      build-provider-packages:
-        description: "Whether to build provider packages (true/false). If false providers are from PyPI"
+      build-provider-distributions:
+        description: "Whether to build provider distributions (true/false). If false providers are from PyPI"
         required: true
         type: string
       upgrade-to-newer-dependencies:
         description: "Whether to attempt to upgrade image to newer dependencies (false/RANDOM_VALUE)"
-        required: true
-        type: string
-      chicken-egg-providers:
-        description: "Space-separated list of providers that should be installed from context files"
         required: true
         type: string
       constraints-branch:
@@ -82,9 +78,8 @@ jobs:
       # Always build images during the extra checks and never push them
       push-image: "false"
       use-uv: ${{ inputs.use-uv }}
-      build-provider-packages: ${{ inputs.build-provider-packages }}
+      build-provider-distributions: ${{ inputs.build-provider-distributions }}
       upgrade-to-newer-dependencies: ${{ inputs.upgrade-to-newer-dependencies }}
-      chicken-egg-providers: ${{ inputs.chicken-egg-providers }}
       constraints-branch: ${{ inputs.constraints-branch }}
       docker-cache: ${{ inputs.docker-cache }}
       disable-airflow-repo-cache: ${{ inputs.disable-airflow-repo-cache }}
@@ -107,9 +102,8 @@ jobs:
       # Always build images during the extra checks and never push them
       push-image: "false"
       use-uv: "false"
-      build-provider-packages: ${{ inputs.build-provider-packages }}
+      build-provider-distributions: ${{ inputs.build-provider-distributions }}
       upgrade-to-newer-dependencies: ${{ inputs.upgrade-to-newer-dependencies }}
-      chicken-egg-providers: ${{ inputs.chicken-egg-providers }}
       constraints-branch: ${{ inputs.constraints-branch }}
       docker-cache: ${{ inputs.docker-cache }}
       disable-airflow-repo-cache: ${{ inputs.disable-airflow-repo-cache }}
