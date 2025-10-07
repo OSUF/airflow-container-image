@@ -17,17 +17,9 @@
 
 from __future__ import annotations
 
-import sys
-from typing import Any
-
-from pydantic import JsonValue
+from pydantic import JsonValue, RootModel
 
 from airflow.api_fastapi.core_api.base import BaseModel
-
-if sys.version_info < (3, 12):
-    # zmievsa/cadwyn#262
-    # Setting this to "Any" doesn't have any impact on the API as it has to be parsed as valid JSON regardless
-    JsonValue = Any  # type: ignore [misc]
 
 
 class XComResponse(BaseModel):
@@ -36,3 +28,15 @@ class XComResponse(BaseModel):
     key: str
     value: JsonValue
     """The returned XCom value in a JSON-compatible format."""
+
+
+class XComSequenceIndexResponse(RootModel):
+    """XCom schema with minimal structure for index-based access."""
+
+    root: JsonValue
+
+
+class XComSequenceSliceResponse(RootModel):
+    """XCom schema with minimal structure for slice-based access."""
+
+    root: list[JsonValue]

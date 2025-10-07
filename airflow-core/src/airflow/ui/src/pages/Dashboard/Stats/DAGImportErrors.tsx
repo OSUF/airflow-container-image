@@ -17,22 +17,24 @@
  * under the License.
  */
 import { Box, Button, Skeleton, useDisclosure } from "@chakra-ui/react";
+import { useTranslation } from "react-i18next";
 import { LuFileWarning } from "react-icons/lu";
 
 import { useImportErrorServiceGetImportErrors } from "openapi/queries/queries";
 import { ErrorAlert } from "src/components/ErrorAlert";
 import { StateBadge } from "src/components/StateBadge";
-import { pluralize } from "src/utils";
+import { StatsCard } from "src/components/StatsCard";
 
 import { DAGImportErrorsModal } from "./DAGImportErrorsModal";
-import { StatsCard } from "./StatsCard";
 
 export const DAGImportErrors = ({ iconOnly = false }: { readonly iconOnly?: boolean }) => {
   const { onClose, onOpen, open } = useDisclosure();
+  const { i18n, t: translate } = useTranslation("dashboard");
+
+  const isRTL = i18n.dir() === "rtl";
 
   const { data, error, isLoading } = useImportErrorServiceGetImportErrors();
   const importErrorsCount = data?.total_entries ?? 0;
-  const importErrors = data?.import_errors ?? [];
 
   if (isLoading) {
     return <Skeleton height="9" width="225px" />;
@@ -51,9 +53,9 @@ export const DAGImportErrors = ({ iconOnly = false }: { readonly iconOnly?: bool
           colorPalette="failed"
           height={7}
           onClick={onOpen}
-          title={pluralize("Dag Import Error", importErrorsCount)}
+          title={translate("importErrors.dagImportError", { count: importErrorsCount })}
         >
-          <LuFileWarning size="0.5rem" />
+          <LuFileWarning size={8} />
           {importErrorsCount}
         </StateBadge>
       ) : (
@@ -62,11 +64,12 @@ export const DAGImportErrors = ({ iconOnly = false }: { readonly iconOnly?: bool
           count={importErrorsCount}
           icon={<LuFileWarning />}
           isLoading={isLoading}
-          label="Dag Import Errors"
+          isRTL={isRTL}
+          label={translate("importErrors.dagImportError", { count: importErrorsCount })}
           onClick={onOpen}
         />
       )}
-      <DAGImportErrorsModal importErrors={importErrors} onClose={onClose} open={open} />
+      <DAGImportErrorsModal onClose={onClose} open={open} />
     </Box>
   );
 };

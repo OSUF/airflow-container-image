@@ -21,6 +21,8 @@ import json
 import logging
 import re
 import sys
+
+PY313 = sys.version_info >= (3, 13)
 import warnings
 from unittest.mock import patch
 
@@ -36,7 +38,7 @@ from airflow.providers_manager import (
     ProvidersManager,
 )
 
-from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker
+from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker, skip_if_not_on_main
 from tests_common.test_utils.paths import AIRFLOW_ROOT_PATH
 
 
@@ -58,6 +60,7 @@ class TestProviderManager:
 
     def test_providers_are_loaded(self):
         with self._caplog.at_level(logging.WARNING):
+            self._caplog.clear()
             provider_manager = ProvidersManager()
             provider_list = list(provider_manager.providers.keys())
             # No need to sort the list - it should be sorted alphabetically !
@@ -72,12 +75,12 @@ class TestProviderManager:
             assert self._caplog.records == []
 
     def test_hooks_deprecation_warnings_generated(self):
+        providers_manager = ProvidersManager()
+        providers_manager._provider_dict["test-package"] = ProviderInfo(
+            version="0.0.1",
+            data={"hook-class-names": ["airflow.providers.sftp.hooks.sftp.SFTPHook"]},
+        )
         with pytest.warns(expected_warning=DeprecationWarning, match="hook-class-names") as warning_records:
-            providers_manager = ProvidersManager()
-            providers_manager._provider_dict["test-package"] = ProviderInfo(
-                version="0.0.1",
-                data={"hook-class-names": ["airflow.providers.sftp.hooks.sftp.SFTPHook"]},
-            )
             providers_manager._discover_hooks()
         assert warning_records
 
@@ -117,8 +120,8 @@ class TestProviderManager:
             )
             providers_manager._discover_hooks()
             _ = providers_manager._hooks_lazy_dict["wrong-connection-type"]
-        assert len(self._caplog.records) == 1
-        assert "Inconsistency!" in self._caplog.records[0].message
+        assert len(self._caplog.entries) == 1
+        assert "Inconsistency!" in self._caplog[0]["event"]
         assert "sftp" not in providers_manager.hooks
 
     def test_warning_logs_not_generated(self):
@@ -162,11 +165,12 @@ class TestProviderManager:
             providers_manager._discover_hooks()
             _ = providers_manager._hooks_lazy_dict["dummy"]
         assert len(self._caplog.records) == 1
-        assert "The connection type 'dummy' is already registered" in self._caplog.records[0].message
+        msg = self._caplog.messages[0]
+        assert msg.startswith("The connection type 'dummy' is already registered")
         assert (
             "different class names: 'airflow.providers.dummy.hooks.dummy.DummyHook'"
             " and 'airflow.providers.dummy.hooks.dummy.DummyHook2'."
-        ) in self._caplog.records[0].message
+        ) in msg
 
     def test_providers_manager_register_plugins(self):
         providers_manager = ProvidersManager()
@@ -228,6 +232,7 @@ class TestProviderManager:
             raise AssertionError("There are warnings generated during hook imports. Please fix them")
         assert [w.message for w in warning_records if "hook-class-names" in str(w.message)] == []
 
+    @skip_if_not_on_main
     @pytest.mark.execution_timeout(150)
     def test_hook_values(self):
         provider_dependencies = json.loads(
@@ -245,23 +250,40 @@ class TestProviderManager:
                 assert len(connections_list) > 60
         if len(self._caplog.records) != 0:
             real_warning_count = 0
-            for record in self._caplog.records:
+            for record in self._caplog.entries:
                 # When there is error importing provider that is excluded the provider name is in the message
-                if any(excluded_provider in record.message for excluded_provider in excluded_providers):
+                if any(excluded_provider in record["event"] for excluded_provider in excluded_providers):
                     continue
-                print(record.message, file=sys.stderr)
-                print(record.exc_info, file=sys.stderr)
+                print(record["event"], file=sys.stderr)
+                print(record.get("exc_info"), file=sys.stderr)
                 real_warning_count += 1
             if real_warning_count:
+                if PY313:
+                    only_ydb_and_yandexcloud_warnings = True
+                    for record in warning_records:
+                        if "ydb" in str(record.message) or "yandexcloud" in str(record.message):
+                            continue
+                        only_ydb_and_yandexcloud_warnings = False
+                    if only_ydb_and_yandexcloud_warnings:
+                        print(
+                            "Only warnings from ydb and yandexcloud providers are generated, "
+                            "which is expected in Python 3.13+",
+                            file=sys.stderr,
+                        )
+                        return
                 raise AssertionError("There are warnings generated during hook imports. Please fix them")
         assert [w.message for w in warning_records if "hook-class-names" in str(w.message)] == []
 
     def test_connection_form_widgets(self):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         provider_manager = ProvidersManager()
         connections_form_widgets = list(provider_manager.connection_form_widgets.keys())
         assert len(connections_form_widgets) > 29
 
     def test_field_behaviours(self):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         provider_manager = ProvidersManager()
         connections_with_field_behaviours = list(provider_manager.field_behaviours.keys())
         assert len(connections_with_field_behaviours) > 16

@@ -26,11 +26,8 @@ import pytest
 import requests
 from python_on_whales import docker
 
-# isort:off (needed to workaround isort bug)
 from docker_tests.command_utils import run_command
 from docker_tests.constants import AIRFLOW_ROOT_PATH
-
-# isort:on (needed to workaround isort bug)
 
 DOCKER_EXAMPLES_DIR = AIRFLOW_ROOT_PATH / "docker-stack-docs" / "docker-examples"
 QUARANTINED_DOCKER_EXAMPLES: dict[str, str] = {
@@ -42,7 +39,9 @@ QUARANTINED_DOCKER_EXAMPLES: dict[str, str] = {
 
 @cache
 def get_latest_airflow_image():
-    response = requests.get("https://pypi.org/pypi/apache-airflow/json")
+    response = requests.get(
+        "https://pypi.org/pypi/apache-airflow/json", headers={"User-Agent": "Python requests"}
+    )
     response.raise_for_status()
     latest_released_version = response.json()["info"]["version"]
     return f"apache/airflow:{latest_released_version}"

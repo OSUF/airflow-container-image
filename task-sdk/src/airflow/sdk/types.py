@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Protocol, Union
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
+from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.definitions._internal.types import NOTSET, ArgNotSet
 
 if TYPE_CHECKING:
@@ -28,16 +29,18 @@ if TYPE_CHECKING:
 
     from pydantic import AwareDatetime
 
+    from airflow.sdk._shared.logging.types import Logger as Logger
+    from airflow.sdk.api.datamodels._generated import TaskInstanceState
     from airflow.sdk.bases.operator import BaseOperator
     from airflow.sdk.definitions.asset import Asset, AssetAlias, AssetAliasEvent, AssetRef, BaseAssetUniqueKey
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.mappedoperator import MappedOperator
 
-    Operator = Union[BaseOperator, MappedOperator]
+    Operator: TypeAlias = BaseOperator | MappedOperator
 
 
 class DagRunProtocol(Protocol):
-    """Minimal interface for a DAG run available during the execution."""
+    """Minimal interface for a Dag run available during the execution."""
 
     dag_id: str
     run_id: str
@@ -55,6 +58,7 @@ class RuntimeTaskInstanceProtocol(Protocol):
     """Minimal interface for a task instance available during the execution."""
 
     id: uuid.UUID
+    dag_version_id: uuid.UUID
     task: BaseOperator
     task_id: str
     dag_id: str
@@ -65,14 +69,14 @@ class RuntimeTaskInstanceProtocol(Protocol):
     hostname: str | None = None
     start_date: AwareDatetime
     end_date: AwareDatetime | None = None
+    state: TaskInstanceState | None = None
 
     def xcom_pull(
         self,
         task_ids: str | list[str] | None = None,
         dag_id: str | None = None,
-        key: str = "return_value",
-        # TODO: `include_prior_dates` isn't yet supported in the SDK
-        # include_prior_dates: bool = False,
+        key: str = BaseXCom.XCOM_RETURN_KEY,
+        include_prior_dates: bool = False,
         *,
         map_indexes: int | Iterable[int] | None | ArgNotSet = NOTSET,
         default: Any = None,
@@ -84,6 +88,8 @@ class RuntimeTaskInstanceProtocol(Protocol):
     def get_template_context(self) -> Context: ...
 
     def get_first_reschedule_date(self, first_try_number) -> AwareDatetime | None: ...
+
+    def get_previous_dagrun(self, state: str | None = None) -> DagRunProtocol | None: ...
 
     @staticmethod
     def get_ti_count(

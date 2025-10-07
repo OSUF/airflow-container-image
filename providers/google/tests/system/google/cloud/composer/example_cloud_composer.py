@@ -20,6 +20,17 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.sdk import task
+else:
+    # Airflow 2 path
+    from airflow.decorators import task  # type: ignore[attr-defined,no-redef]
+from airflow.exceptions import AirflowException
 from airflow.models.baseoperator import chain
 from airflow.models.dag import DAG
 from airflow.providers.google.cloud.operators.cloud_composer import (
@@ -29,13 +40,20 @@ from airflow.providers.google.cloud.operators.cloud_composer import (
     CloudComposerListEnvironmentsOperator,
     CloudComposerListImageVersionsOperator,
     CloudComposerRunAirflowCLICommandOperator,
+    CloudComposerTriggerDAGRunOperator,
     CloudComposerUpdateEnvironmentOperator,
 )
 from airflow.providers.google.cloud.sensors.cloud_composer import CloudComposerDAGRunSensor
-from airflow.utils.trigger_rule import TriggerRule
+
+try:
+    from airflow.sdk import TriggerRule
+except ImportError:
+    # Compatibility for Airflow < 3.1
+    from airflow.utils.trigger_rule import TriggerRule  # type: ignore[no-redef,attr-defined]
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID", "default")
 PROJECT_ID = os.environ.get("SYSTEM_TESTS_GCP_PROJECT", "default")
+PROJECT_NUMBER = "{{ task_instance.xcom_pull('get_project_number') }}"
 
 DAG_ID = "composer"
 REGION = "us-central1"
@@ -48,7 +66,10 @@ ENVIRONMENT_ID_ASYNC = f"test-deferrable-{DAG_ID}-{ENV_ID}".replace("_", "-")
 ENVIRONMENT = {
     "config": {
         "software_config": {"image_version": "composer-2-airflow-2"},
-    }
+        "node_config": {
+            "service_account": f"{PROJECT_NUMBER}-compute@developer.gserviceaccount.com",
+        },
+    },
 }
 # [END howto_operator_composer_simple_environment]
 
@@ -62,6 +83,22 @@ UPDATE_MASK = {"paths": ["labels.label"]}
 # [END howto_operator_composer_update_environment]
 
 COMMAND = "dags list -o json --verbose"
+
+
+@task(task_id="get_project_number")
+def get_project_number():
+    """Helper function to retrieve the number of the project based on PROJECT_ID"""
+    try:
+        with build("cloudresourcemanager", "v1") as service:
+            response = service.projects().get(projectId=PROJECT_ID).execute()
+        return response["projectNumber"]
+    except HttpError as exc:
+        if exc.status_code == 403:
+            raise AirflowException(
+                "No project found with specified name, "
+                "or caller does not have permissions to read specified project"
+            )
+        raise exc
 
 
 with DAG(
@@ -182,6 +219,16 @@ with DAG(
     )
     # [END howto_sensor_dag_run_deferrable_mode]
 
+    # [START howto_operator_trigger_dag_run]
+    trigger_dag_run = CloudComposerTriggerDAGRunOperator(
+        task_id="trigger_dag_run",
+        project_id=PROJECT_ID,
+        region=REGION,
+        environment_id=ENVIRONMENT_ID,
+        composer_dag_id="airflow_monitoring",
+    )
+    # [END howto_operator_trigger_dag_run]
+
     # [START howto_operator_delete_composer_environment]
     delete_env = CloudComposerDeleteEnvironmentOperator(
         task_id="delete_env",
@@ -204,13 +251,18 @@ with DAG(
     defer_delete_env.trigger_rule = TriggerRule.ALL_DONE
 
     chain(
+        # TEST SETUP
+        get_project_number(),
         image_versions,
+        # TEST BODY
         [create_env, defer_create_env],
         list_envs,
         get_env,
         [update_env, defer_update_env],
         [run_airflow_cli_cmd, defer_run_airflow_cli_cmd],
         [dag_run_sensor, defer_dag_run_sensor],
+        trigger_dag_run,
+        # TEST TEARDOWN
         [delete_env, defer_delete_env],
     )
 
@@ -219,7 +271,6 @@ with DAG(
     # This test needs watcher in order to properly mark success/failure
     # when "teardown" task with trigger rule is part of the DAG
     list(dag.tasks) >> watcher()
-
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 

@@ -27,6 +27,100 @@
 Changelog
 ---------
 
+6.3.0
+.....
+
+
+Features
+~~~~~~~~
+
+* ``Added specialized insert_rows in PostgresHook which uses faster psycopg execute_batch method (#54988)``
+* ``Add rudimentary support for psycopg3 (#52976)``
+* ``Implemented native get_column_names in PostgresDialect to become SQLAlchemy independent (#54437)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``PostgresDialect should use index instead of name in get_column_names and get_primary_keys (#54832)``
+
+Misc
+~~~~
+
+* ``Add CI support for SQLAlchemy 2.0 (#52233)``
+
+Doc-only
+~~~~~~~~
+
+* ``Make term Dag consistent in providers docs (#55101)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Switch pre-commit to prek (#54258)``
+
+.. Review and move the new changes to one of the sections above:
+   * ``Fix Airflow 2 reference in README/index of providers (#55240)``
+
+6.2.3
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix the PostgresHook ignoring custom adapters registered (#53707)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.2.2
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix(postgres/hooks): ensure get_df uses SQLAlchemy engine to avoid pandas warning (#52224)``
+
+Misc
+~~~~
+
+* ``Add Python 3.13 support for Airflow. (#46891)``
+* ``Cleanup type ignores in postgres provider where possible (#53275)``
+* ``Remove type ignore across codebase after mypy upgrade (#53243)``
+* ``Remove upper-binding for "python-requires" (#52980)``
+* ``Temporarily switch to use >=,< pattern instead of '~=' (#52967)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.2.1
+.....
+
+Misc
+~~~~
+
+* ``Move 'BaseHook' implementation to task SDK (#51873)``
+* ``Disable UP038 ruff rule and revert mandatory 'X | Y' in insintance checks (#52644)``
+* ``Drop support for Python 3.9 (#52072)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.2.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.10+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Misc
+~~~~
+
+* ``Bump min Airflow version in providers to 2.10 (#49843)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Update description of provider.yaml dependencies (#50231)``
+   * ``Avoid committing history for providers (#49907)``
+
 6.1.3
 .....
 

@@ -41,7 +41,7 @@ determined by:
     .. tab-item:: @task.bash
         :sync: taskflow
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
             :language: python
             :dedent: 4
             :start-after: [START howto_decorator_bash]
@@ -50,7 +50,7 @@ determined by:
     .. tab-item:: BashOperator
         :sync: operator
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_operator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_operator.py
             :language: python
             :dedent: 4
             :start-after: [START howto_operator_bash]
@@ -67,7 +67,7 @@ You can use :ref:`Jinja templates <concepts:jinja-templating>` to parameterize t
     .. tab-item:: @task.bash
         :sync: taskflow
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
             :language: python
             :dedent: 4
             :start-after: [START howto_decorator_bash_template]
@@ -76,7 +76,7 @@ You can use :ref:`Jinja templates <concepts:jinja-templating>` to parameterize t
     .. tab-item:: BashOperator
         :sync: operator
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_operator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_operator.py
             :language: python
             :dedent: 4
             :start-after: [START howto_operator_bash_template]
@@ -85,7 +85,7 @@ You can use :ref:`Jinja templates <concepts:jinja-templating>` to parameterize t
 Using the ``@task.bash`` TaskFlow decorator allows you to return a formatted string and take advantage of
 having all :ref:`execution context variables directly accessible to decorated tasks <taskflow/accessing_context_variables>`.
 
-.. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+.. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
     :language: python
     :dedent: 4
     :start-after: [START howto_decorator_bash_context_vars]
@@ -169,7 +169,7 @@ exit code if you pass ``skip_on_exit_code``).
     .. tab-item:: @task.bash
         :sync: taskflow
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
             :language: python
             :dedent: 4
             :start-after: [START howto_decorator_bash_skip]
@@ -178,7 +178,7 @@ exit code if you pass ``skip_on_exit_code``).
     .. tab-item:: BashOperator
         :sync: operator
 
-        .. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_operator.py
+        .. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_operator.py
             :language: python
             :start-after: [START howto_operator_bash_skip]
             :end-before: [END howto_operator_bash_skip]
@@ -246,7 +246,7 @@ into a temporary file. By default, the file is placed in a temporary directory
 
 
 To execute a bash script, place it in a location relative to the directory containing
-the DAG file. So if your DAG file is in ``/usr/local/airflow/dags/test_dag.py``, you can
+the Dag file. So if your Dag file is in ``/usr/local/airflow/dags/test_dag.py``, you can
 move your ``test.sh`` file to any location under ``/usr/local/airflow/dags/`` (Example:
 ``/usr/local/airflow/dags/scripts/test.sh``) and pass the relative path to ``bash_command``
 as shown below:
@@ -280,7 +280,7 @@ in files composed in different languages, and general flexibility in structuring
 pipelines.
 
 It is also possible to define your ``template_searchpath`` as pointing to any folder
-locations in the DAG constructor call.
+locations in the Dag constructor call.
 
 .. tab-set::
 
@@ -302,7 +302,7 @@ locations in the DAG constructor call.
         .. code-block:: python
             :emphasize-lines: 1
 
-            with DAG("example_bash_dag", ..., template_searchpath="/opt/scripts"):
+            with Dag("example_bash_dag", ..., template_searchpath="/opt/scripts"):
                 t2 = BashOperator(
                     task_id="bash_example",
                     bash_command="test.sh ",
@@ -388,7 +388,7 @@ or even build the Bash command(s) to execute.
 
 For example, use conditional logic to determine task behavior:
 
-.. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+.. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
     :language: python
     :dedent: 4
     :start-after: [START howto_decorator_bash_conditional]
@@ -396,7 +396,7 @@ For example, use conditional logic to determine task behavior:
 
 Or call a function to help build a Bash command:
 
-.. exampleinclude:: /../../../airflow-core/src/airflow/example_dags/example_bash_decorator.py
+.. exampleinclude:: /../src/airflow/providers/standard/example_dags/example_bash_decorator.py
     :language: python
     :dedent: 4
     :start-after: [START howto_decorator_bash_build_cmd]

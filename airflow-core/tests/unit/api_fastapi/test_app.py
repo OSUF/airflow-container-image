@@ -19,6 +19,10 @@ from __future__ import annotations
 from unittest import mock
 
 import pytest
+from fastapi import FastAPI
+
+import airflow.api_fastapi.app as app_module
+import airflow.plugins_manager as plugins_manager
 
 pytestmark = pytest.mark.db_test
 
@@ -60,14 +64,11 @@ def test_execution_api_app(mock_create_task_exec_api, mock_init_plugins, mock_in
     mock_init_plugins.assert_not_called()
 
 
-def test_execution_api_app_lifespan(client):
+def test_execution_api_app_lifespan(client, get_execution_app):
     with client(apps="execution") as test_client:
-        test_app = test_client.app
-
-        # assert the execution app was created and lifespan was called
-        execution_app = [route.app for route in test_app.router.routes if route.path == "/execution"]
+        execution_app = get_execution_app(test_client)
         assert execution_app, "Execution API app not found in FastAPI app."
-        assert execution_app[0].state.lifespan_called, "Lifespan not called on Execution API app."
+        assert execution_app.state.lifespan_called, "Lifespan not called on Execution API app."
 
 
 @mock.patch("airflow.api_fastapi.app.init_views")
@@ -93,3 +94,27 @@ def test_catch_all_route_last(client):
     """
     test_app = client(apps="all").app
     assert test_app.routes[-1].path == "/{rest_of_path:path}"
+
+
+@pytest.mark.parametrize(
+    "fastapi_apps, expected_message, invalid_path",
+    [
+        (
+            [{"name": "test", "app": FastAPI(), "url_prefix": ""}],
+            "'url_prefix' key is empty string for the fastapi app: test",
+            "",
+        ),
+        (
+            [{"name": "test", "app": FastAPI(), "url_prefix": next(iter(app_module.RESERVED_URL_PREFIXES))}],
+            "attempted to use reserved url_prefix",
+            next(iter(app_module.RESERVED_URL_PREFIXES)),
+        ),
+    ],
+)
+def test_plugin_with_invalid_url_prefix(caplog, fastapi_apps, expected_message, invalid_path):
+    app = FastAPI()
+    with mock.patch.object(plugins_manager, "fastapi_apps", fastapi_apps):
+        app_module.init_plugins(app)
+
+    assert any(expected_message in rec.message for rec in caplog.records)
+    assert not any(r.path == invalid_path for r in app.routes)

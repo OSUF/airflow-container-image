@@ -28,20 +28,17 @@ from python_on_whales import DockerClient, docker
 from python_on_whales.exceptions import DockerException
 from rich.console import Console
 
-# isort:off (needed to workaround isort bug)
 from docker_tests.command_utils import run_command
 from docker_tests.constants import AIRFLOW_ROOT_PATH
 
 from tests_common.test_utils.api_client_helpers import generate_access_token
-
-# isort:on (needed to workaround isort bug)
 
 console = Console(width=400, color_system="standard")
 
 DOCKER_COMPOSE_HOST_PORT = os.environ.get("HOST_PORT", "localhost:8080")
 AIRFLOW_WWW_USER_USERNAME = os.environ.get("_AIRFLOW_WWW_USER_USERNAME", "airflow")
 AIRFLOW_WWW_USER_PASSWORD = os.environ.get("_AIRFLOW_WWW_USER_PASSWORD", "airflow")
-DAG_ID = "example_bash_operator"
+DAG_ID = "example_simplest_dag"
 DAG_RUN_ID = "test_dag_run_id"
 
 
@@ -86,13 +83,13 @@ def test_trigger_dag_and_wait_for_result(default_docker_image, tmp_path_factory,
     copyfile(compose_file_path, tmp_dir / "docker-compose.yaml")
 
     subfolders = ("dags", "logs", "plugins", "config")
-    console.print(f"[yellow]Cleaning subfolders:[/ {subfolders}")
+    console.print(f"[yellow]Creating subfolders:{subfolders}[/]")
     # Create required directories for docker compose quick start howto
     for subdir in subfolders:
         (tmp_dir / subdir).mkdir()
 
     dot_env_file = tmp_dir / ".env"
-    console.print(f"[yellow]Creating .env file :[/ {dot_env_file}")
+    console.print(f"[yellow]Creating .env file :{dot_env_file}[/]")
     dot_env_file.write_text(f"AIRFLOW_UID={os.getuid()}\n")
     console.print(" .env file content ".center(72, "="))
     console.print(dot_env_file.read_text())

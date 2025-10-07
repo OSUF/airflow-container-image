@@ -35,9 +35,6 @@ import logging
 import os
 from typing import Any
 
-from sphinx_exts.provider_yaml_utils import load_package_data
-
-import airflow
 from docs.utils.conf_constants import (
     AIRFLOW_FAVICON_PATH,
     AIRFLOW_REPO_ROOT_PATH,
@@ -56,6 +53,9 @@ from docs.utils.conf_constants import (
     get_intersphinx_mapping,
     get_rst_epilogue,
 )
+from sphinx_exts.provider_yaml_utils import load_package_data
+
+import airflow
 
 PACKAGE_NAME = "apache-airflow-providers"
 PROVIDERS_SUMMARY_DOCS_PATH = AIRFLOW_REPO_ROOT_PATH / "providers-summary-docs"
@@ -241,7 +241,7 @@ autoapi_options = AUTOAPI_OPTIONS
 suppress_warnings = SUPPRESS_WARNINGS
 
 # -- Options for ext.exampleinclude --------------------------------------------
-exampleinclude_sourceroot = os.path.abspath("..")
+exampleinclude_sourceroot = os.path.abspath(".")
 
 # -- Options for ext.redirects -------------------------------------------------
 redirects_file = "redirects.txt"

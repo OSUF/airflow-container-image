@@ -32,12 +32,13 @@ from functools import cache
 from typing import TYPE_CHECKING
 
 import lazy_object_proxy
-from rich_argparse import RawTextRichHelpFormatter, RichHelpFormatter
+from rich_argparse import HelpPreviewAction, RawTextRichHelpFormatter, RichHelpFormatter
 
 from airflowctl.ctl.cli_config import (
     ActionCommand,
     DefaultHelpParser,
     GroupCommand,
+    GroupCommandParser,
     core_commands,
 )
 from airflowctl.exceptions import AirflowCtlException
@@ -54,7 +55,10 @@ airflow_commands = core_commands.copy()  # make a copy to prevent bad interactio
 log = logging.getLogger(__name__)
 
 
-ALL_COMMANDS_DICT: dict[str, CLICommand] = {sp.name: sp for sp in airflow_commands}
+ALL_COMMANDS_DICT: dict[str, CLICommand] = {
+    sp.name: GroupCommandParser.from_group_command(sp) if isinstance(sp, GroupCommand) else sp
+    for sp in airflow_commands
+}
 
 
 class AirflowHelpFormatter(RichHelpFormatter):
@@ -69,7 +73,7 @@ class AirflowHelpFormatter(RichHelpFormatter):
             self._indent()
             subactions = action._get_subactions()
             action_subcommands, group_subcommands = partition(
-                lambda d: isinstance(ALL_COMMANDS_DICT[d.dest], GroupCommand), subactions
+                lambda d: isinstance(ALL_COMMANDS_DICT[d.dest], GroupCommandParser), subactions
             )
             yield Action([], f"\n{' ':{self._current_indent}}Groups", nargs=0)
             self._indent()
@@ -98,15 +102,27 @@ class LazyRichHelpFormatter(RawTextRichHelpFormatter):
         return super().add_argument(action)
 
 
+def add_preview_action(parser: argparse.ArgumentParser) -> None:
+    """Add preview action to parser."""
+    parser.add_argument(
+        "--preview",
+        action=HelpPreviewAction,
+    )
+
+
 @cache
-def get_parser(dag_parser: bool = False) -> argparse.ArgumentParser:
+def get_parser() -> argparse.ArgumentParser:
     """Create and returns command line argument parser."""
     parser = DefaultHelpParser(prog="airflowctl", formatter_class=AirflowHelpFormatter)
+    add_preview_action(parser)
     subparsers = parser.add_subparsers(dest="subcommand", metavar="GROUP_OR_COMMAND")
     subparsers.required = True
 
     for _, sub in sorted(ALL_COMMANDS_DICT.items()):
-        _add_command(subparsers, sub)
+        _add_command(
+            subparsers, GroupCommandParser.from_group_command(sub) if isinstance(sub, GroupCommand) else sub
+        )
+
     return parser
 
 
@@ -129,9 +145,10 @@ def _add_command(subparsers: argparse._SubParsersAction, sub: CLICommand) -> Non
         sub_proc = subparsers.add_parser(
             sub.name, help=sub.help, description=sub.description or sub.help, epilog=sub.epilog
         )
+    add_preview_action(sub_proc)
     sub_proc.formatter_class = LazyRichHelpFormatter
 
-    if isinstance(sub, GroupCommand):
+    if isinstance(sub, GroupCommandParser):
         _add_group_command(sub, sub_proc)
     elif isinstance(sub, ActionCommand):
         _add_action_command(sub, sub_proc)
@@ -145,7 +162,7 @@ def _add_action_command(sub: ActionCommand, sub_proc: argparse.ArgumentParser) -
     sub_proc.set_defaults(func=sub.func)
 
 
-def _add_group_command(sub: GroupCommand, sub_proc: argparse.ArgumentParser) -> None:
+def _add_group_command(sub: GroupCommandParser, sub_proc: argparse.ArgumentParser) -> None:
     subcommands = sub.subcommands
     sub_subparsers = sub_proc.add_subparsers(dest="subcommand", metavar="COMMAND")
     sub_subparsers.required = True

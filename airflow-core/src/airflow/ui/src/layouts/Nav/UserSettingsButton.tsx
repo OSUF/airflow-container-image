@@ -17,78 +17,125 @@
  * under the License.
  */
 import { useDisclosure } from "@chakra-ui/react";
-import dayjs from "dayjs";
-import timezone from "dayjs/plugin/timezone";
-import utc from "dayjs/plugin/utc";
-import { useState } from "react";
-import { FiClock, FiGrid, FiLogOut, FiMoon, FiSun, FiUser } from "react-icons/fi";
+import { useTranslation } from "react-i18next";
+import {
+  FiGrid,
+  FiLogOut,
+  FiMoon,
+  FiSun,
+  FiUser,
+  FiGlobe,
+  FiEye,
+  FiChevronRight,
+  FiChevronLeft,
+  FiMonitor,
+} from "react-icons/fi";
 import { MdOutlineAccountTree } from "react-icons/md";
 import { useLocalStorage } from "usehooks-ts";
 
 import { Menu } from "src/components/ui";
 import { useColorMode } from "src/context/colorMode/useColorMode";
-import { useTimezone } from "src/context/timezone";
+import type { NavItemResponse } from "src/utils/types";
 
+import LanguageModal from "./LanguageModal";
 import LogoutModal from "./LogoutModal";
 import { NavButton } from "./NavButton";
+import { PluginMenuItem } from "./PluginMenuItem";
+import { TimezoneMenuItem } from "./TimezoneMenuItem";
 import TimezoneModal from "./TimezoneModal";
 
-dayjs.extend(utc);
-dayjs.extend(timezone);
+const COLOR_MODES = {
+  DARK: "dark",
+  LIGHT: "light",
+  SYSTEM: "system",
+} as const;
 
-export const UserSettingsButton = () => {
-  const { colorMode, toggleColorMode } = useColorMode();
+type ColorMode = (typeof COLOR_MODES)[keyof typeof COLOR_MODES];
+
+export const UserSettingsButton = ({ externalViews }: { readonly externalViews: Array<NavItemResponse> }) => {
+  const { i18n, t: translate } = useTranslation();
+  const { selectedTheme, setColorMode } = useColorMode();
   const { onClose: onCloseTimezone, onOpen: onOpenTimezone, open: isOpenTimezone } = useDisclosure();
   const { onClose: onCloseLogout, onOpen: onOpenLogout, open: isOpenLogout } = useDisclosure();
-  const { selectedTimezone } = useTimezone();
+  const { onClose: onCloseLanguage, onOpen: onOpenLanguage, open: isOpenLanguage } = useDisclosure();
   const [dagView, setDagView] = useLocalStorage<"graph" | "grid">("default_dag_view", "grid");
 
-  const [time, setTime] = useState(dayjs());
+  const theme = selectedTheme ?? COLOR_MODES.SYSTEM;
+
+  const isRTL = i18n.dir() === "rtl";
 
   return (
-    <Menu.Root onOpenChange={() => setTime(dayjs())} positioning={{ placement: "right" }}>
+    <Menu.Root positioning={{ placement: "right" }}>
       <Menu.Trigger asChild>
-        <NavButton icon={<FiUser size="1.75rem" />} title="User" />
+        <NavButton icon={<FiUser size={28} />} title={translate("user")} />
       </Menu.Trigger>
       <Menu.Content>
-        <Menu.Item onClick={toggleColorMode} value="color-mode">
-          {colorMode === "light" ? (
-            <>
-              <FiMoon size="1.25rem" style={{ marginRight: "8px" }} />
-              Switch to Dark Mode
-            </>
-          ) : (
-            <>
-              <FiSun size="1.25rem" style={{ marginRight: "8px" }} />
-              Switch to Light Mode
-            </>
-          )}
+        <Menu.Item onClick={onOpenLanguage} value="language">
+          <FiGlobe size={20} style={{ marginRight: "8px" }} />
+          {translate("selectLanguage")}
         </Menu.Item>
+        <Menu.Root>
+          <Menu.TriggerItem>
+            <FiEye size={20} style={{ marginRight: "8px" }} />
+            {translate("appearance.appearance")}
+            {isRTL ? (
+              <FiChevronLeft size={20} style={{ marginRight: "auto" }} />
+            ) : (
+              <FiChevronRight size={20} style={{ marginLeft: "auto" }} />
+            )}
+          </Menu.TriggerItem>
+          <Menu.Content>
+            <Menu.RadioItemGroup
+              onValueChange={(element) => setColorMode(element.value as ColorMode)}
+              value={theme}
+            >
+              <Menu.RadioItem value={COLOR_MODES.LIGHT}>
+                <FiSun size={20} style={{ marginRight: "8px" }} />
+                {translate("appearance.lightMode")}
+                <Menu.ItemIndicator />
+              </Menu.RadioItem>
+              <Menu.RadioItem value={COLOR_MODES.DARK}>
+                <FiMoon size={20} style={{ marginRight: "8px" }} />
+                {translate("appearance.darkMode")}
+                <Menu.ItemIndicator />
+              </Menu.RadioItem>
+              <Menu.RadioItem value={COLOR_MODES.SYSTEM}>
+                <FiMonitor size={20} style={{ marginRight: "8px" }} />
+                {translate("appearance.systemMode")}
+                <Menu.ItemIndicator />
+              </Menu.RadioItem>
+            </Menu.RadioItemGroup>
+          </Menu.Content>
+        </Menu.Root>
         <Menu.Item
           onClick={() => (dagView === "grid" ? setDagView("graph") : setDagView("grid"))}
           value={dagView}
         >
           {dagView === "grid" ? (
             <>
-              <MdOutlineAccountTree size="1.25rem" style={{ marginRight: "8px" }} />
-              Default to graph view
+              <MdOutlineAccountTree size={20} style={{ marginRight: "8px" }} />
+              {translate("defaultToGraphView")}
             </>
           ) : (
             <>
-              <FiGrid size="1.25rem" style={{ marginRight: "8px" }} />
-              Default to grid view
+              <FiGrid size={20} style={{ marginRight: "8px" }} />
+              {translate("defaultToGridView")}
             </>
           )}
         </Menu.Item>
-        <Menu.Item onClick={onOpenTimezone} value="timezone">
-          <FiClock size="1.25rem" style={{ marginRight: "8px" }} />
-          {dayjs(time).tz(selectedTimezone).format("HH:mm z (Z)")}
-        </Menu.Item>
+        <TimezoneMenuItem onOpen={onOpenTimezone} />
+        {externalViews.map((view) => (
+          <PluginMenuItem {...view} key={view.name} />
+        ))}
         <Menu.Item onClick={onOpenLogout} value="logout">
-          <FiLogOut size="1.25rem" style={{ marginRight: "8px" }} />
-          Logout
+          <FiLogOut
+            size={20}
+            style={{ marginRight: "8px", transform: isRTL ? "rotate(180deg)" : undefined }}
+          />
+          {translate("logout")}
         </Menu.Item>
       </Menu.Content>
+      <LanguageModal isOpen={isOpenLanguage} onClose={onCloseLanguage} />
       <TimezoneModal isOpen={isOpenTimezone} onClose={onCloseTimezone} />
       <LogoutModal isOpen={isOpenLogout} onClose={onCloseLogout} />
     </Menu.Root>

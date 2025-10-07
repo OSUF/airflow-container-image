@@ -44,12 +44,20 @@ from airflow.providers.amazon.aws.triggers.dms import (
     DmsReplicationDeprovisionedTrigger,
     DmsReplicationTerminalStatusTrigger,
 )
-from airflow.utils import timezone
 from airflow.utils.state import DagRunState
 from airflow.utils.types import DagRunType
 
+from tests_common.test_utils.dag import sync_dag_to_db
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 from unit.amazon.aws.utils.test_template_fields import validate_template_fields
+
+try:
+    from airflow.sdk import timezone
+except ImportError:
+    from airflow.utils import timezone  # type: ignore[attr-defined,no-redef]
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.models.dag_version import DagVersion
 
 TASK_ARN = "test_arn"
 
@@ -148,6 +156,27 @@ class TestDmsCreateTaskOperator:
         )
 
         validate_template_fields(op)
+
+    def test_overwritten_conn_passed_to_hook(self):
+        OVERWRITTEN_CONN = "new-conn-id"
+        op = DmsCreateTaskOperator(
+            task_id="dms_create_task_operator",
+            **self.TASK_DATA,
+            aws_conn_id=OVERWRITTEN_CONN,
+            verify=True,
+            botocore_config={"read_timeout": 42},
+        )
+        assert op.hook.aws_conn_id == OVERWRITTEN_CONN
+
+    def test_default_conn_passed_to_hook(self):
+        DEFAULT_CONN = "aws_default"
+        op = DmsCreateTaskOperator(
+            task_id="dms_create_task_operator",
+            **self.TASK_DATA,
+            verify=True,
+            botocore_config={"read_timeout": 42},
+        )
+        assert op.hook.aws_conn_id == DEFAULT_CONN
 
 
 class TestDmsDeleteTaskOperator:
@@ -288,12 +317,22 @@ class TestDmsDescribeTasksOperator:
     @pytest.mark.db_test
     @mock.patch.object(DmsHook, "describe_replication_tasks", return_value=(None, MOCK_RESPONSE))
     @mock.patch.object(DmsHook, "get_conn")
-    def test_describe_tasks_return_value(self, mock_conn, mock_describe_replication_tasks, session):
+    def test_describe_tasks_return_value(
+        self,
+        mock_conn,
+        mock_describe_replication_tasks,
+        session,
+        clean_dags_dagruns_and_dagbundles,
+        testing_dag_bundle,
+    ):
         describe_task = DmsDescribeTasksOperator(
             task_id="describe_tasks", dag=self.dag, describe_tasks_kwargs={"Filters": [self.FILTER]}
         )
 
         if AIRFLOW_V_3_0_PLUS:
+            sync_dag_to_db(self.dag)
+            dag_version = DagVersion.get_latest_version(self.dag.dag_id)
+            ti = TaskInstance(task=describe_task, dag_version_id=dag_version.id)
             dag_run = DagRun(
                 dag_id=self.dag.dag_id,
                 logical_date=timezone.utcnow(),
@@ -309,7 +348,7 @@ class TestDmsDescribeTasksOperator:
                 run_type=DagRunType.MANUAL,
                 state=DagRunState.RUNNING,
             )
-        ti = TaskInstance(task=describe_task)
+            ti = TaskInstance(task=describe_task)
         ti.dag_run = dag_run
         session.add(ti)
         session.commit()
@@ -476,7 +515,9 @@ class TestDmsDescribeReplicationConfigsOperator:
 
     @pytest.mark.db_test
     @mock.patch.object(DmsHook, "conn")
-    def test_template_fields_native(self, mock_conn, session):
+    def test_template_fields_native(
+        self, mock_conn, session, clean_dags_dagruns_and_dagbundles, testing_dag_bundle
+    ):
         logical_date = timezone.datetime(2020, 1, 1)
         Variable.set("test_filter", self.filter, session=session)
 
@@ -491,6 +532,19 @@ class TestDmsDescribeReplicationConfigsOperator:
         )
 
         if AIRFLOW_V_3_0_PLUS:
+            sync_dag_to_db(dag)
+            dag_version = DagVersion.get_latest_version(dag.dag_id)
+            ti = TaskInstance(task=op, dag_version_id=dag_version.id)
+            dag_run = DagRun(
+                dag_id=dag.dag_id,
+                run_id="test",
+                run_type=DagRunType.MANUAL,
+                state=DagRunState.RUNNING,
+                logical_date=logical_date,
+            )
+            sync_dag_to_db(dag)
+            dag_version = DagVersion.get_latest_version(dag.dag_id)
+            ti = TaskInstance(task=op, dag_version_id=dag_version.id)
             dag_run = DagRun(
                 dag_id=dag.dag_id,
                 run_id="test",
@@ -506,7 +560,7 @@ class TestDmsDescribeReplicationConfigsOperator:
                 state=DagRunState.RUNNING,
                 execution_date=logical_date,
             )
-        ti = TaskInstance(task=op)
+            ti = TaskInstance(task=op)
         ti.dag_run = dag_run
         session.add(ti)
         session.commit()

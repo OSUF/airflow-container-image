@@ -120,7 +120,7 @@ class TestGCSToBigQueryOperator:
         result = operator.execute(context=MagicMock())
 
         assert result == "1"
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -222,6 +222,31 @@ class TestGCSToBigQueryOperator:
         hook.return_value.insert_job.assert_has_calls(calls)
 
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
+    def test_two_partitionings_should_fail(self, hook):
+        hook.return_value.insert_job.side_effect = [
+            MagicMock(job_id=REAL_JOB_ID, error_result=False),
+            REAL_JOB_ID,
+        ]
+        hook.return_value.generate_job_id.return_value = REAL_JOB_ID
+        hook.return_value.split_tablename.return_value = (PROJECT_ID, DATASET, TABLE)
+        with pytest.raises(
+            ValueError, match=r"Only one of time_partitioning or range_partitioning can be set."
+        ):
+            GCSToBigQueryOperator(
+                task_id=TASK_ID,
+                bucket=TEST_BUCKET,
+                source_objects=TEST_SOURCE_OBJECTS,
+                destination_project_dataset_table=TEST_EXPLICIT_DEST,
+                schema_fields=SCHEMA_FIELDS,
+                max_id_key=MAX_ID_KEY,
+                write_disposition=WRITE_DISPOSITION,
+                external_table=False,
+                project_id=JOB_PROJECT_ID,
+                time_partitioning={"field": "created", "type": "DAY"},
+                range_partitioning={"field": "grade", "range": {"start": 0, "end": 100, "interval": 20}},
+            )
+
+    @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_max_value_should_throw_ex_when_query_returns_no_rows(self, hook):
         hook.return_value.insert_job.side_effect = [
             MagicMock(job_id=REAL_JOB_ID, error_result=False),
@@ -305,7 +330,7 @@ class TestGCSToBigQueryOperator:
         )
 
         operator.execute(context=MagicMock())
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -406,7 +431,7 @@ class TestGCSToBigQueryOperator:
         )
 
         operator.execute(context=MagicMock())
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -508,7 +533,7 @@ class TestGCSToBigQueryOperator:
 
         operator.execute(context=MagicMock())
 
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -612,7 +637,7 @@ class TestGCSToBigQueryOperator:
 
         operator.execute(context=MagicMock())
 
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -717,7 +742,7 @@ class TestGCSToBigQueryOperator:
 
         operator.execute(context=MagicMock())
 
-        bq_hook.return_value.create_empty_table.assert_called_once_with(
+        bq_hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -821,7 +846,7 @@ class TestGCSToBigQueryOperator:
 
         operator.execute(context=MagicMock())
 
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -1023,7 +1048,7 @@ class TestGCSToBigQueryOperator:
         result = operator.execute(context=MagicMock())
 
         assert result == "1"
-        bq_hook.return_value.create_empty_table.assert_called_once_with(
+        bq_hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -1207,7 +1232,7 @@ class TestGCSToBigQueryOperator:
         )
 
         operator.execute(context=MagicMock())
-        hook.return_value.create_empty_table.assert_called_once_with(
+        hook.return_value.create_table.assert_called_once_with(
             exists_ok=True,
             location=None,
             project_id=JOB_PROJECT_ID,
@@ -1588,7 +1613,7 @@ class TestGCSToBigQueryOperator:
 
             operator.execute(context=MagicMock())
 
-            hook.return_value.create_empty_table.assert_called_once_with(
+            hook.return_value.create_table.assert_called_once_with(
                 exists_ok=True,
                 location=None,
                 project_id=JOB_PROJECT_ID,
@@ -1620,13 +1645,13 @@ def create_task_instance(create_task_instance_of_operator, session):
     )
 
 
-@pytest.mark.db_test
 class TestAsyncGCSToBigQueryOperator:
     def _set_execute_complete(self, session, ti, **next_kwargs):
         ti.next_method = "execute_complete"
         ti.next_kwargs = next_kwargs
         session.flush()
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_execute_without_external_table_async_should_execute_successfully(
         self, hook, create_task_instance, session
@@ -1658,6 +1683,7 @@ class TestAsyncGCSToBigQueryOperator:
         trigger_cls = session.scalar(select(Trigger.classpath).where(Trigger.id == ti.trigger_id))
         assert trigger_cls == "airflow.providers.google.cloud.triggers.bigquery.BigQueryInsertJobTrigger"
 
+    @pytest.mark.db_test
     def test_execute_without_external_table_async_should_throw_ex_when_event_status_error(
         self, create_task_instance, session
     ):
@@ -1710,6 +1736,7 @@ class TestAsyncGCSToBigQueryOperator:
             "%s completed with response %s ", "test-gcs-to-bq-operator", "Job completed"
         )
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_execute_without_external_table_generate_job_id_async_should_execute_successfully(
         self, hook, create_task_instance, session
@@ -1749,6 +1776,7 @@ class TestAsyncGCSToBigQueryOperator:
             force_rerun=True,
         )
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_execute_without_external_table_reattach_async_should_execute_successfully(
         self, hook, create_task_instance, session
@@ -1788,6 +1816,7 @@ class TestAsyncGCSToBigQueryOperator:
             project_id=JOB_PROJECT_ID,
         )
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_execute_without_external_table_force_rerun_async_should_execute_successfully(
         self, hook, create_task_instance
@@ -1836,6 +1865,7 @@ class TestAsyncGCSToBigQueryOperator:
             project_id=JOB_PROJECT_ID,
         )
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("GCSHook"))
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_schema_fields_without_external_table_async_should_execute_successfully(
@@ -1897,6 +1927,7 @@ class TestAsyncGCSToBigQueryOperator:
 
         bq_hook.return_value.insert_job.assert_has_calls(calls)
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("GCSHook"))
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_schema_fields_int_without_external_table_async_should_execute_successfully(
@@ -1963,6 +1994,7 @@ class TestAsyncGCSToBigQueryOperator:
 
         bq_hook.return_value.insert_job.assert_has_calls(calls)
 
+    @pytest.mark.db_test
     @mock.patch(GCS_TO_BQ_PATH.format("BigQueryHook"))
     def test_execute_complete_reassigns_job_id(self, bq_hook, create_task_instance, session):
         """Assert that we use job_id from event after deferral."""

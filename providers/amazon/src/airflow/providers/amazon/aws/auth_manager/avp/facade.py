@@ -37,6 +37,13 @@ from airflow.utils.log.logging_mixin import LoggingMixin
 
 if TYPE_CHECKING:
     from airflow.api_fastapi.auth.managers.base_auth_manager import ResourceMethod
+
+    try:
+        from airflow.api_fastapi.auth.managers.base_auth_manager import ExtendedResourceMethod
+    except ImportError:
+        from airflow.api_fastapi.auth.managers.base_auth_manager import (
+            ResourceMethod as ExtendedResourceMethod,
+        )
     from airflow.providers.amazon.aws.auth_manager.user import AwsAuthManagerUser
 
 
@@ -48,7 +55,7 @@ NB_REQUESTS_PER_BATCH = 30
 class IsAuthorizedRequest(TypedDict, total=False):
     """Represent the parameters of ``is_authorized`` method in AVP facade."""
 
-    method: ResourceMethod
+    method: ExtendedResourceMethod
     entity_type: AvpEntities
     entity_id: str | None
     context: dict | None
@@ -113,7 +120,7 @@ class AwsAuthManagerAmazonVerifiedPermissionsFacade(LoggingMixin):
                 "principal": {"entityType": get_entity_type(AvpEntities.USER), "entityId": user.get_id()},
                 "action": {
                     "actionType": get_entity_type(AvpEntities.ACTION),
-                    "actionId": get_action_id(entity_type, method),
+                    "actionId": get_action_id(entity_type, method, entity_id),
                 },
                 "resource": {"entityType": get_entity_type(entity_type), "entityId": entity_id or "*"},
                 "entities": {"entityList": entity_list},
@@ -274,7 +281,9 @@ class AwsAuthManagerAmazonVerifiedPermissionsFacade(LoggingMixin):
                 "principal": {"entityType": get_entity_type(AvpEntities.USER), "entityId": user.get_id()},
                 "action": {
                     "actionType": get_entity_type(AvpEntities.ACTION),
-                    "actionId": get_action_id(request["entity_type"], request["method"]),
+                    "actionId": get_action_id(
+                        request["entity_type"], request["method"], request.get("entity_id")
+                    ),
                 },
                 "resource": {
                     "entityType": get_entity_type(request["entity_type"]),

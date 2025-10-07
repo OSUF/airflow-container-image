@@ -19,7 +19,7 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 from enum import Enum
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AwareDatetime,
@@ -35,7 +35,12 @@ from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
 from airflow.api_fastapi.execution_api.datamodels.asset import AssetProfile
 from airflow.api_fastapi.execution_api.datamodels.connection import ConnectionResponse
 from airflow.api_fastapi.execution_api.datamodels.variable import VariableResponse
-from airflow.utils.state import IntermediateTIState, TaskInstanceState as TIState, TerminalTIState
+from airflow.utils.state import (
+    DagRunState,
+    IntermediateTIState,
+    TaskInstanceState as TIState,
+    TerminalTIState,
+)
 from airflow.utils.types import DagRunType
 
 AwareDatetimeAdapter = TypeAdapter(AwareDatetime)
@@ -66,6 +71,7 @@ class TerminalStateNonSuccess(str, Enum):
     FAILED = TerminalTIState.FAILED
     SKIPPED = TerminalTIState.SKIPPED
     REMOVED = TerminalTIState.REMOVED
+    UPSTREAM_FAILED = TerminalTIState.UPSTREAM_FAILED
 
 
 class TITerminalStatePayload(StrictBaseModel):
@@ -75,6 +81,7 @@ class TITerminalStatePayload(StrictBaseModel):
 
     end_date: UtcDateTime
     """When the task completed executing"""
+    rendered_map_index: str | None = None
 
 
 class TISuccessStatePayload(StrictBaseModel):
@@ -97,6 +104,7 @@ class TISuccessStatePayload(StrictBaseModel):
 
     task_outlets: Annotated[list[AssetProfile], Field(default_factory=list)]
     outlet_events: Annotated[list[dict[str, Any]], Field(default_factory=list)]
+    rendered_map_index: str | None = None
 
 
 class TITargetStatePayload(StrictBaseModel):
@@ -136,6 +144,7 @@ class TIDeferredStatePayload(StrictBaseModel):
 
     Both forms will be passed along to the TaskSDK upon resume, the server will not handle either.
     """
+    rendered_map_index: str | None = None
 
 
 class TIRescheduleStatePayload(StrictBaseModel):
@@ -171,6 +180,7 @@ class TIRetryStatePayload(StrictBaseModel):
         ),
     ]
     end_date: UtcDateTime
+    rendered_map_index: str | None = None
 
 
 class TISkippedDownstreamTasksStatePayload(StrictBaseModel):
@@ -209,14 +219,12 @@ def ti_state_discriminator(v: dict[str, str] | StrictBaseModel) -> str:
 # It is called "_terminal_" to avoid future conflicts if we added an actual state named "terminal"
 # and "_other_" is a catch-all for all other states that are not covered by the other schemas.
 TIStateUpdate = Annotated[
-    Union[
-        Annotated[TITerminalStatePayload, Tag("_terminal_")],
-        Annotated[TISuccessStatePayload, Tag("success")],
-        Annotated[TITargetStatePayload, Tag("_other_")],
-        Annotated[TIDeferredStatePayload, Tag("deferred")],
-        Annotated[TIRescheduleStatePayload, Tag("up_for_reschedule")],
-        Annotated[TIRetryStatePayload, Tag("up_for_retry")],
-    ],
+    Annotated[TITerminalStatePayload, Tag("_terminal_")]
+    | Annotated[TISuccessStatePayload, Tag("success")]
+    | Annotated[TITargetStatePayload, Tag("_other_")]
+    | Annotated[TIDeferredStatePayload, Tag("deferred")]
+    | Annotated[TIRescheduleStatePayload, Tag("up_for_reschedule")]
+    | Annotated[TIRetryStatePayload, Tag("up_for_retry")],
     Discriminator(ti_state_discriminator),
 ]
 
@@ -239,6 +247,7 @@ class TaskInstance(BaseModel):
     dag_id: str
     run_id: str
     try_number: int
+    dag_version_id: uuid.UUID
     map_index: int = -1
     hostname: str | None = None
     context_carrier: dict | None = None
@@ -288,6 +297,7 @@ class DagRun(StrictBaseModel):
     end_date: UtcDateTime | None
     clear_number: int = 0
     run_type: DagRunType
+    state: DagRunState
     conf: Annotated[dict[str, Any], Field(default_factory=dict)]
     consumed_asset_events: list[AssetEventDagRunReference]
 
@@ -298,7 +308,7 @@ class TIRunContext(BaseModel):
     dag_run: DagRun
     """DAG run information for the task instance."""
 
-    task_reschedule_count: Annotated[int, Field(default=0)]
+    task_reschedule_count: int = 0
     """How many times the task has been rescheduled."""
 
     max_tries: int
@@ -310,7 +320,7 @@ class TIRunContext(BaseModel):
     connections: Annotated[list[ConnectionResponse], Field(default_factory=list)]
     """Connections that can be accessed by the task instance."""
 
-    upstream_map_indexes: dict[str, int] | None = None
+    upstream_map_indexes: dict[str, int | list[int] | None] | None = None
 
     next_method: str | None = None
     """Method to call. Set when task resumes from a trigger."""
@@ -324,7 +334,7 @@ class TIRunContext(BaseModel):
     xcom_keys_to_clear: Annotated[list[str], Field(default_factory=list)]
     """List of Xcom keys that need to be cleared and purged on by the worker."""
 
-    should_retry: bool
+    should_retry: bool = False
     """If the ti encounters an error, whether it should enter retry or failed state."""
 
 
@@ -341,3 +351,9 @@ class TaskStatesResponse(BaseModel):
     """Response for task states with run_id, task and state."""
 
     task_states: dict[str, Any]
+
+
+class InactiveAssetsResponse(BaseModel):
+    """Response for inactive assets."""
+
+    inactive_assets: Annotated[list[AssetProfile], Field(default_factory=list)]

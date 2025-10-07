@@ -27,6 +27,123 @@
 Changelog
 ---------
 
+1.10.4
+......
+
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Make 'apply_function' optional in 'AwaitMessageTrigger' (#55437)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+1.10.3
+......
+
+
+Misc
+~~~~
+
+* ``Refactor Common Queue Interface (#54651)``
+
+Doc-only
+~~~~~~~~
+
+* ``Make term Dag consistent in providers docs (#55101)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Switch pre-commit to prek (#54258)``
+
+.. Review and move the new changes to one of the sections above:
+   * ``Fix Airflow 2 reference in README/index of providers (#55240)``
+
+1.10.2
+......
+
+Misc
+~~~~
+
+* ``Set minimum version for common.messaging to 1.0.3 (#54160)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Fix 'importskip' statements in tests (#54135)``
+
+1.10.1
+......
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Add validation for commit_cadence in Kafka ConsumeFromTopicOperator (#52015)``
+
+Misc
+~~~~
+
+* ``Add Python 3.13 support for Airflow. (#46891)``
+* ``Cleanup type ignores (#53300)``
+* ``Remove type ignore across codebase after mypy upgrade (#53243)``
+* ``Make kafka provider compatible with mypy 1.16.1 (#53125)``
+* ``Remove upper-binding for "python-requires" (#52980)``
+* ``Temporarily switch to use >=,< pattern instead of '~=' (#52967)``
+* ``Replace BaseHook to Task SDK for apache/kafka (#52784)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+1.10.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add 'KafkaMessageQueueTrigger' for enhanced message queue trigger usability on Kafka queue (#51718)``
+
+Misc
+~~~~
+
+* ``Move 'BaseHook' implementation to task SDK (#51873)``
+* ``Update BaseOperator imports for Airflow 3.0 compatibility (#52503)``
+* ``Drop support for Python 3.9 (#52072)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove pytest db marker apache kafka (#52098)``
+   * ``Updating kafka systests to setup connections using ENV (#52076)``
+   * ``Replace usage of os.environ with conf_vars in kafka IT (#52025)``
+   * ``Introducing fixture to create 'Connections' without DB in provider tests (#51930)``
+
+1.9.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.10+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Features
+~~~~~~~~
+
+* ``AIP-82: Add KafkaMessageQueueProvider (#49938)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix: correct invalid arg timeout (#49426)``
+* ``Fix max_messages warning of Kafka ConsumeFromTopicOperator (#48646)``
+
+Misc
+~~~~
+
+* ``Bump min Airflow version in providers to 2.10 (#49843)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Update description of provider.yaml dependencies (#50231)``
+   * ``Avoid committing history for providers (#49907)``
+
 1.8.1
 .....
 

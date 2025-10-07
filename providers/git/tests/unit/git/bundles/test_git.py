@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import types
 from unittest import mock
 from unittest.mock import patch
 
@@ -32,12 +33,11 @@ from airflow.exceptions import AirflowException
 from airflow.models import Connection
 from airflow.providers.git.bundles.git import GitDagBundle
 from airflow.providers.git.hooks.git import GitHook
-from airflow.utils import db
+from airflow.sdk.exceptions import ErrorType
+from airflow.sdk.execution_time.comms import ErrorResponse
 
 from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.db import clear_db_connections
-
-pytestmark = pytest.mark.db_test
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_1_PLUS
 
 
 @pytest.fixture(autouse=True)
@@ -68,21 +68,34 @@ def git_repo(tmp_path_factory):
     return (directory, repo)
 
 
+def assert_repo_is_closed(bundle: GitDagBundle):
+    # cat-file processes get left around if the repo is not closed, so check it was
+    assert bundle.repo.git.cat_file_all is None
+    assert bundle.bare_repo.git.cat_file_all is None
+    assert bundle.repo.git.cat_file_header is None
+    assert bundle.bare_repo.git.cat_file_header is None
+
+
 class TestGitDagBundle:
     @classmethod
     def teardown_class(cls) -> None:
-        clear_db_connections()
+        return
 
-    @classmethod
-    def setup_class(cls) -> None:
-        db.merge_conn(
+    # TODO: Potential performance issue, converted setup_class to a setup_connections function level fixture
+    @pytest.fixture(autouse=True)
+    def setup_connections(self, create_connection_without_db, request):
+        # Skip setup for tests that need to create their own connections
+        if request.function.__name__ in ["test_view_url", "test_view_url_subdir"]:
+            return
+
+        create_connection_without_db(
             Connection(
                 conn_id="git_default",
                 host="git@github.com:apache/airflow.git",
                 conn_type="git",
             )
         )
-        db.merge_conn(
+        create_connection_without_db(
             Connection(
                 conn_id=CONN_HTTPS,
                 host=AIRFLOW_HTTPS_URL,
@@ -90,7 +103,7 @@ class TestGitDagBundle:
                 conn_type="git",
             )
         )
-        db.merge_conn(
+        create_connection_without_db(
             Connection(
                 conn_id=CONN_NO_REPO_URL,
                 conn_type="git",
@@ -116,7 +129,7 @@ class TestGitDagBundle:
             tracking_ref=GIT_DEFAULT_BRANCH,
             repo_url="https://github.com/apache/zzzairflow",
         )
-        assert bundle.repo_url == "https://github.com/apache/zzzairflow"
+        assert bundle.repo_url == f"https://user:{ACCESS_TOKEN}@github.com/apache/zzzairflow"
 
     def test_falls_back_to_connection_host_when_no_repo_url_provided(self):
         bundle = GitDagBundle(name="test", git_conn_id=CONN_HTTPS, tracking_ref=GIT_DEFAULT_BRANCH)
@@ -131,6 +144,8 @@ class TestGitDagBundle:
         bundle.initialize()
 
         assert bundle.get_current_version() == repo.head.commit.hexsha
+
+        assert_repo_is_closed(bundle)
 
     @mock.patch("airflow.providers.git.bundles.git.GitHook")
     def test_get_specific_version(self, mock_githook, git_repo):
@@ -157,6 +172,8 @@ class TestGitDagBundle:
 
         files_in_repo = {f.name for f in bundle.path.iterdir() if f.is_file()}
         assert {"test_dag.py"} == files_in_repo
+
+        assert_repo_is_closed(bundle)
 
     @mock.patch("airflow.providers.git.bundles.git.GitHook")
     def test_get_tag_version(self, mock_githook, git_repo):
@@ -206,6 +223,8 @@ class TestGitDagBundle:
         files_in_repo = {f.name for f in bundle.path.iterdir() if f.is_file()}
         assert {"test_dag.py", "new_test.py"} == files_in_repo
 
+        assert_repo_is_closed(bundle)
+
     @pytest.mark.parametrize(
         "amend",
         [
@@ -244,6 +263,8 @@ class TestGitDagBundle:
 
         files_in_repo = {f.name for f in bundle.path.iterdir() if f.is_file()}
         assert {"test_dag.py", "new_test.py"} == files_in_repo
+
+        assert_repo_is_closed(bundle)
 
     @mock.patch("airflow.providers.git.bundles.git.GitHook")
     def test_refresh_tag(self, mock_githook, git_repo):
@@ -410,16 +431,17 @@ class TestGitDagBundle:
         ],
     )
     @mock.patch("airflow.providers.git.bundles.git.Repo")
-    def test_view_url(self, mock_gitrepo, repo_url, extra_conn_kwargs, expected_url, session):
-        session.query(Connection).delete()
-        conn = Connection(
-            conn_id="my_git_connection",
-            host=repo_url,
-            conn_type="git",
-            **(extra_conn_kwargs or {}),
+    def test_view_url(
+        self, mock_gitrepo, repo_url, extra_conn_kwargs, expected_url, create_connection_without_db
+    ):
+        create_connection_without_db(
+            Connection(
+                conn_id="my_git_connection",
+                host=repo_url,
+                conn_type="git",
+                **(extra_conn_kwargs or {}),
+            )
         )
-        session.add(conn)
-        session.commit()
         bundle = GitDagBundle(
             name="test",
             git_conn_id="my_git_connection",
@@ -497,16 +519,17 @@ class TestGitDagBundle:
         ],
     )
     @mock.patch("airflow.providers.git.bundles.git.Repo")
-    def test_view_url_subdir(self, mock_gitrepo, repo_url, extra_conn_kwargs, expected_url, session):
-        session.query(Connection).delete()
-        conn = Connection(
-            conn_id="git_default",
-            host=repo_url,
-            conn_type="git",
-            **(extra_conn_kwargs or {}),
+    def test_view_url_subdir(
+        self, mock_gitrepo, repo_url, extra_conn_kwargs, expected_url, create_connection_without_db
+    ):
+        create_connection_without_db(
+            Connection(
+                conn_id="git_default",
+                host=repo_url,
+                conn_type="git",
+                **(extra_conn_kwargs or {}),
+            )
         )
-        session.add(conn)
-        session.commit()
         bundle = GitDagBundle(
             name="test",
             tracking_ref="main",
@@ -516,6 +539,100 @@ class TestGitDagBundle:
         bundle.initialize = mock.MagicMock()
         view_url = bundle.view_url("0f0f0f")
         assert view_url == expected_url
+        bundle.initialize.assert_not_called()
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_1_PLUS, reason="Airflow 3.0 does not support view_url_template")
+    @pytest.mark.parametrize(
+        "repo_url, extra_conn_kwargs, expected_url",
+        [
+            (
+                "git@github.com:apache/airflow.git",
+                None,
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "git@github.com:apache/airflow",
+                None,
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com/apache/airflow",
+                None,
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com/apache/airflow.git",
+                None,
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "git@gitlab.com:apache/airflow.git",
+                None,
+                "https://gitlab.com/apache/airflow/-/tree/{version}/subdir",
+            ),
+            (
+                "git@bitbucket.org:apache/airflow.git",
+                None,
+                "https://bitbucket.org/apache/airflow/src/{version}/subdir",
+            ),
+            (
+                "git@myorg.github.com:apache/airflow.git",
+                None,
+                "https://myorg.github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://myorg.github.com/apache/airflow.git",
+                None,
+                "https://myorg.github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com/apache/airflow",
+                {"password": "abc123"},
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com/apache/airflow",
+                {"login": "abc123"},
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com/apache/airflow",
+                {"login": "abc123", "password": "def456"},
+                "https://github.com/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com:443/apache/airflow",
+                None,
+                "https://github.com:443/apache/airflow/tree/{version}/subdir",
+            ),
+            (
+                "https://github.com:443/apache/airflow",
+                {"password": "abc123"},
+                "https://github.com:443/apache/airflow/tree/{version}/subdir",
+            ),
+        ],
+    )
+    @mock.patch("airflow.providers.git.bundles.git.Repo")
+    def test_view_url_template_subdir(
+        self, mock_gitrepo, repo_url, extra_conn_kwargs, expected_url, create_connection_without_db
+    ):
+        create_connection_without_db(
+            Connection(
+                conn_id="git_default",
+                host=repo_url,
+                conn_type="git",
+                **(extra_conn_kwargs or {}),
+            )
+        )
+        bundle = GitDagBundle(
+            name="test",
+            tracking_ref="main",
+            subdir="subdir",
+            git_conn_id="git_default",
+        )
+        bundle.initialize = mock.MagicMock()
+        view_url_template = bundle.view_url_template()
+        assert view_url_template == expected_url
         bundle.initialize.assert_not_called()
 
     @mock.patch("airflow.providers.git.bundles.git.Repo")
@@ -554,12 +671,16 @@ class TestGitDagBundle:
 
                 assert "Repository path: %s not found" in str(exc_info.value)
 
-    @patch.dict(os.environ, {"AIRFLOW_CONN_MY_TEST_GIT": '{"host": "something"}'})
+    @patch.dict(os.environ, {"AIRFLOW_CONN_MY_TEST_GIT": '{"host": "something", "conn_type": "git"}'})
     @pytest.mark.parametrize(
         "conn_id, expected_hook_type",
         [("my_test_git", GitHook), ("something-else", type(None))],
     )
-    def test_repo_url_access_missing_connection_doesnt_error(self, conn_id, expected_hook_type):
+    def test_repo_url_access_missing_connection_doesnt_error(
+        self, conn_id, expected_hook_type, mock_supervisor_comms
+    ):
+        if expected_hook_type is type(None):
+            mock_supervisor_comms.send.return_value = ErrorResponse(error=ErrorType.CONNECTION_NOT_FOUND)
         bundle = GitDagBundle(
             name="testa",
             tracking_ref="main",
@@ -598,3 +719,29 @@ class TestGitDagBundle:
                 repo_url=repo_url,
             )
             assert bundle.repo_url == expected
+
+    @mock.patch("airflow.providers.git.bundles.git.Repo")
+    def test_clone_passes_env_from_githook(self, mock_gitRepo):
+        def _fake_clone_from(*_, **kwargs):
+            if "env" not in kwargs:
+                raise GitCommandError("git", 128, "Permission denied")
+            return types.SimpleNamespace()
+
+        EXPECTED_ENV = {"GIT_SSH_COMMAND": "ssh -i /id_rsa -o StrictHostKeyChecking=no"}
+
+        mock_gitRepo.clone_from.side_effect = _fake_clone_from
+        mock_gitRepo.return_value = types.SimpleNamespace()
+
+        with mock.patch("airflow.providers.git.bundles.git.GitHook") as mock_githook:
+            mock_githook.return_value.repo_url = "git@github.com:apache/airflow.git"
+            mock_githook.return_value.env = EXPECTED_ENV
+
+            bundle = GitDagBundle(
+                name="my_repo",
+                git_conn_id="git_default",
+                repo_url="git@github.com:apache/airflow.git",
+                tracking_ref="main",
+            )
+            bundle._clone_bare_repo_if_required()
+            _, kwargs = mock_gitRepo.clone_from.call_args
+            assert kwargs["env"] == EXPECTED_ENV

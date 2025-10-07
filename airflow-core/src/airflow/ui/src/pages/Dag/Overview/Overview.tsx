@@ -19,7 +19,9 @@
 import { Box, HStack, Skeleton } from "@chakra-ui/react";
 import dayjs from "dayjs";
 import { lazy, useState, Suspense } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
+import { useLocalStorage } from "usehooks-ts";
 
 import {
   useAssetServiceGetAssetEvents,
@@ -28,15 +30,18 @@ import {
 } from "openapi/queries";
 import { AssetEvents } from "src/components/Assets/AssetEvents";
 import { DurationChart } from "src/components/DurationChart";
+import { NeedsReviewButton } from "src/components/NeedsReviewButton";
 import TimeRangeSelector from "src/components/TimeRangeSelector";
 import { TrendCountButton } from "src/components/TrendCountButton";
-import { isStatePending, useAutoRefresh } from "src/utils";
+import { SearchParamsKeys } from "src/constants/searchParams";
+import { useGridRuns } from "src/queries/useGridRuns.ts";
 
 const FailedLogs = lazy(() => import("./FailedLogs"));
 
 const defaultHour = "24";
 
 export const Overview = () => {
+  const { t: translate } = useTranslation("dag");
   const { dagId } = useParams();
 
   const now = dayjs();
@@ -44,47 +49,35 @@ export const Overview = () => {
   const [endDate, setEndDate] = useState(now.toISOString());
   const [assetSortBy, setAssetSortBy] = useState("-timestamp");
 
-  const refetchInterval = useAutoRefresh({});
-
   const { data: failedTasks, isLoading } = useTaskInstanceServiceGetTaskInstances({
     dagId: dagId ?? "",
     dagRunId: "~",
-    orderBy: "-run_after",
+    orderBy: ["-run_after"],
     runAfterGte: startDate,
     runAfterLte: endDate,
     state: ["failed"],
   });
 
+  const [limit] = useLocalStorage<number>(`dag_runs_limit-${dagId}`, 10);
   const { data: failedRuns, isLoading: isLoadingFailedRuns } = useDagRunServiceGetDagRuns({
     dagId: dagId ?? "",
+    limit,
     runAfterGte: startDate,
     runAfterLte: endDate,
     state: ["failed"],
   });
-
-  const { data: runs, isLoading: isLoadingRuns } = useDagRunServiceGetDagRuns(
-    {
-      dagId: dagId ?? "",
-      limit: 14,
-      orderBy: "-run_after",
-    },
-    undefined,
-    {
-      refetchInterval: (query) =>
-        query.state.data?.dag_runs.some((run) => isStatePending(run.state)) ? refetchInterval : false,
-    },
-  );
-
+  const { data: gridRuns, isLoading: isLoadingRuns } = useGridRuns({ limit });
   const { data: assetEventsData, isLoading: isLoadingAssetEvents } = useAssetServiceGetAssetEvents({
-    limit: 6,
-    orderBy: assetSortBy,
+    limit,
+    orderBy: [assetSortBy],
     sourceDagId: dagId,
     timestampGte: startDate,
     timestampLte: endDate,
   });
 
   return (
-    <Box m={4}>
+    <Box m={4} spaceY={4}>
+      <NeedsReviewButton dagId={dagId} />
       <Box my={2}>
         <TimeRangeSelector
           defaultValue={defaultHour}
@@ -96,32 +89,32 @@ export const Overview = () => {
       </Box>
       <HStack flexWrap="wrap">
         <TrendCountButton
-          colorPalette="failed"
+          colorPalette={(failedTasks?.total_entries ?? 0) === 0 ? "green" : "failed"}
           count={failedTasks?.total_entries ?? 0}
           endDate={endDate}
           events={(failedTasks?.task_instances ?? []).map((ti) => ({
             timestamp: ti.start_date ?? ti.logical_date,
           }))}
           isLoading={isLoading}
-          label="Failed Task"
+          label={translate("overview.buttons.failedTask", { count: failedTasks?.total_entries ?? 0 })}
           route={{
             pathname: "tasks",
-            search: "state=failed",
+            search: `${SearchParamsKeys.STATE}=failed`,
           }}
           startDate={startDate}
         />
         <TrendCountButton
-          colorPalette="failed"
+          colorPalette={(failedRuns?.total_entries ?? 0) === 0 ? "green" : "failed"}
           count={failedRuns?.total_entries ?? 0}
           endDate={endDate}
           events={(failedRuns?.dag_runs ?? []).map((dr) => ({
             timestamp: dr.run_after,
           }))}
           isLoading={isLoadingFailedRuns}
-          label="Failed Run"
+          label={translate("overview.buttons.failedRun", { count: failedRuns?.total_entries ?? 0 })}
           route={{
             pathname: "runs",
-            search: "state=failed",
+            search: `${SearchParamsKeys.STATE}=failed`,
           }}
           startDate={startDate}
         />
@@ -131,15 +124,16 @@ export const Overview = () => {
           {isLoadingRuns ? (
             <Skeleton height="200px" w="full" />
           ) : (
-            <DurationChart entries={runs?.dag_runs.slice().reverse()} kind="Dag Run" />
+            <DurationChart entries={gridRuns?.slice().reverse()} kind="Dag Run" />
           )}
         </Box>
         {assetEventsData && assetEventsData.total_entries > 0 ? (
           <AssetEvents
             data={assetEventsData}
             isLoading={isLoadingAssetEvents}
+            ml={0}
             setOrderBy={setAssetSortBy}
-            title="Created Asset Event"
+            titleKey="dag:overview.charts.assetEvent"
           />
         ) : undefined}
       </HStack>

@@ -30,6 +30,7 @@ from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOpe
 from airflow.utils import timezone
 from airflow.utils.types import DagRunType
 
+from tests_common.test_utils.dag import sync_dag_to_db
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
 DEFAULT_DATE = timezone.datetime(2017, 1, 1)
@@ -194,11 +195,16 @@ class TestSparkSubmitOperator:
         assert operator2.queue == "default"  # airflow queue
 
     @pytest.mark.db_test
-    def test_render_template(self, session):
+    def test_render_template(self, session, testing_dag_bundle):
         # Given
         operator = SparkSubmitOperator(task_id="spark_submit_job", dag=self.dag, **self._config)
-        ti = TaskInstance(operator, run_id="spark_test")
+
         if AIRFLOW_V_3_0_PLUS:
+            from airflow.models.dag_version import DagVersion
+
+            sync_dag_to_db(self.dag)
+            dag_version = DagVersion.get_latest_version(operator.dag_id)
+            ti = TaskInstance(operator, run_id="spark_test", dag_version_id=dag_version.id)
             ti.dag_run = DagRun(
                 dag_id=self.dag.dag_id,
                 run_id="spark_test",
@@ -209,6 +215,7 @@ class TestSparkSubmitOperator:
                 state="running",
             )
         else:
+            ti = TaskInstance(operator, run_id="spark_test")
             ti.dag_run = DagRun(
                 dag_id=self.dag.dag_id,
                 run_id="spark_test",
@@ -368,6 +375,7 @@ class TestSparkSubmitOperator:
         mock_ti.try_number = 1
         mock_ti.dag_run.logical_date = DEFAULT_DATE
         mock_ti.dag_run.run_after = DEFAULT_DATE
+        mock_ti.dag_run.clear_number = 0
         mock_ti.logical_date = DEFAULT_DATE
         mock_ti.map_index = -1
 
@@ -386,6 +394,9 @@ class TestSparkSubmitOperator:
             "spark.openlineage.parentJobName": "test_dag_id.spark_submit_job",
             "spark.openlineage.parentJobNamespace": "default",
             "spark.openlineage.parentRunId": "01595753-6400-710b-8a12-9e978335a56d",
+            "spark.openlineage.rootParentJobName": "test_dag_id",
+            "spark.openlineage.rootParentJobNamespace": "default",
+            "spark.openlineage.rootParentRunId": "01595753-6400-71fe-a08c-aaed126ab6fb",
             "spark.openlineage.transport.type": "composite",
             "spark.openlineage.transport.continueOnFailure": "True",
             "spark.openlineage.transport.transports.test1.type": "http",

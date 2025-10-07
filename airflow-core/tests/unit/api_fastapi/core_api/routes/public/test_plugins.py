@@ -61,12 +61,55 @@ class TestGetPlugins:
     def test_should_respond_200(
         self, test_client, session, query_params, expected_total_entries, expected_names
     ):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         response = test_client.get("/plugins", params=query_params)
         assert response.status_code == 200
 
         body = response.json()
         assert body["total_entries"] == expected_total_entries
         assert [plugin["name"] for plugin in body["plugins"]] == expected_names
+
+    def test_external_views_model_validator(self, test_client):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
+        response = test_client.get("plugins")
+        body = response.json()
+
+        test_plugin = next((plugin for plugin in body["plugins"] if plugin["name"] == "test_plugin"), None)
+        assert test_plugin is not None
+        assert test_plugin["external_views"] == [
+            # external_views
+            {
+                "name": "Test IFrame Airflow Docs",
+                "href": "https://airflow.apache.org/",
+                "icon": "https://raw.githubusercontent.com/lucide-icons/lucide/refs/heads/main/icons/plug.svg",
+                "icon_dark_mode": None,
+                "url_route": "test_iframe_plugin",
+                "destination": "nav",
+                "category": "browse",
+            },
+            # appbuilder_menu_items
+            {
+                "category": "Search",
+                "destination": "nav",
+                "href": "https://www.google.com",
+                "icon": None,
+                "icon_dark_mode": None,
+                "name": "Google",
+                "url_route": None,
+            },
+            {
+                "category": None,
+                "destination": "nav",
+                "href": "https://www.apache.org/",
+                "icon": None,
+                "icon_dark_mode": None,
+                "label": "The Apache Software Foundation",
+                "name": "apache",
+                "url_route": None,
+            },
+        ]
 
     def test_should_response_401(self, unauthenticated_test_client):
         response = unauthenticated_test_client.get("/plugins")
@@ -75,6 +118,35 @@ class TestGetPlugins:
     def test_should_response_403(self, unauthorized_test_client):
         response = unauthorized_test_client.get("/plugins")
         assert response.status_code == 403
+
+    def test_invalid_external_view_destination_should_log_warning_and_continue(self, test_client, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
+        caplog.set_level("WARNING", "airflow.api_fastapi.core_api.routes.public.plugins")
+
+        response = test_client.get("/plugins")
+        assert response.status_code == 200
+
+        body = response.json()
+        plugin_names = [plugin["name"] for plugin in body["plugins"]]
+
+        # Ensure our invalid plugin is skipped from the valid list
+        assert "test_plugin_invalid" not in plugin_names
+
+        # Verify warning was logged
+        assert any("Skipping invalid plugin due to error" in rec.message for rec in caplog.records)
+
+        response = test_client.get("/plugins", params={"limit": 5, "offset": 9})
+        assert response.status_code == 200
+
+        body = response.json()
+        plugins_page = body["plugins"]
+
+        # Even though limit=5, only 4 valid plugins should come back
+        assert len(plugins_page) == 4
+        assert "test_plugin_invalid" not in [p["name"] for p in plugins_page]
+
+        assert body["total_entries"] == 13
 
 
 @skip_if_force_lowest_dependencies_marker

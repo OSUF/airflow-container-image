@@ -42,8 +42,7 @@ An example Dockerfile can be found |dockerfileLink|, it creates an
 image that can be used by AWS |executorName| to run Airflow tasks using
 the AWS |executorName| Executor in Apache Airflow. The image supports AWS CLI/API
 integration, allowing you to interact with AWS services within your
-Airflow environment. It also includes options to load DAGs (Directed
-Acyclic Graphs) from either an S3 bucket or a local folder.
+Airflow environment. It also includes options to load Dags from either an S3 bucket or a local folder.
 
 
 Prerequisites
@@ -90,9 +89,10 @@ The second method is to use the build-time arguments
 (``aws_access_key_id``, ``aws_secret_access_key``,
 ``aws_default_region``, and ``aws_session_token``).
 
-Note: This method is not recommended for use in production environments,
-because user credentials are stored in the container, which may be a
-security vulnerability.
+.. warning::
+   This method is not recommended for use in production environments,
+   because user credentials are stored in the container, which may be a
+   security vulnerability.
 
 To pass AWS authentication information using these arguments, use the
 ``--build-arg`` option during the Docker build process. For example:
@@ -108,6 +108,10 @@ To pass AWS authentication information using these arguments, use the
 Replace ``YOUR_ACCESS_KEY``, ``YOUR_SECRET_KEY``,
 ``YOUR_SESSION_TOKEN``, and ``YOUR_DEFAULT_REGION`` with valid AWS
 credentials.
+
+.. END DOCKERFILE_AUTH_SECOND_METHOD
+
+.. BEGIN BASE_IMAGE
 
 Base Image
 ~~~~~~~~~~
@@ -138,27 +142,34 @@ which is running the Airflow scheduler process (and thus, the |executorName|
 executor.) Apache Airflow images with specific python versions can be
 downloaded from the Dockerhub registry, and filtering tags by the
 `python
-version <https://hub.docker.com/r/apache/airflow/tags?page=1&name=3.9>`__.
-For example, the tag ``latest-python3.9`` specifies that the image will
-have python 3.9 installed.
+version <https://hub.docker.com/r/apache/airflow/tags?page=1&name=3.10>`__.
+For example, the tag ``latest-python3.10`` specifies that the image will
+have python 3.10 installed.
 
+.. END BASE_IMAGE
 
-Loading DAGs
+.. BEGIN LOADING_DAGS_OVERVIEW
+
+Loading Dags
 ~~~~~~~~~~~~
 
-There are many ways to load DAGs on a container managed by |executorName|. This Dockerfile
+There are many ways to load Dags on a container used by |executorName|. This Dockerfile
 is preconfigured with two possible ways: copying from a local folder, or
-downloading from an S3 bucket. Other methods of loading DAGs are
+downloading from an S3 bucket. Other methods of loading Dags are
 possible as well.
+
+.. END LOADING_DAGS_OVERVIEW
+
+.. BEGIN LOADING_DAGS_FROM_S3
 
 From S3 Bucket
 ^^^^^^^^^^^^^^
 
-To load DAGs from an S3 bucket, uncomment the entrypoint line in the
-Dockerfile to synchronize the DAGs from the specified S3 bucket to the
+To load Dags from an S3 bucket, uncomment the entrypoint line in the
+Dockerfile to synchronize the Dags from the specified S3 bucket to the
 ``/opt/airflow/dags`` directory inside the container. You can optionally
 provide ``container_dag_path`` as a build argument if you want to store
-the DAGs in a directory other than ``/opt/airflow/dags``.
+the Dags in a directory other than ``/opt/airflow/dags``.
 
 Add ``--build-arg s3_uri=YOUR_S3_URI`` in the docker build command.
 Replace ``YOUR_S3_URI`` with the URI of your S3 bucket. Make sure you
@@ -176,13 +187,17 @@ build arguments.
     --build-arg aws_session_token=YOUR_SESSION_TOKEN \
     --build-arg s3_uri=YOUR_S3_URI .
 
+.. END LOADING_DAGS_FROM_S3
+
+.. BEGIN LOADING_DAGS_FROM_LOCAL
+
 From Local Folder
 ^^^^^^^^^^^^^^^^^
 
-To load DAGs from a local folder, place your DAG files in a folder
+To load Dags from a local folder, place your Dag files in a folder
 within the docker build context on your host machine, and provide the
 location of the folder using the ``host_dag_path`` build argument. By
-default, the DAGs will be copied to ``/opt/airflow/dags``, but this can
+default, the Dags will be copied to ``/opt/airflow/dags``, but this can
 be changed by passing the ``container_dag_path`` build-time argument
 during the Docker build process:
 
@@ -190,9 +205,13 @@ during the Docker build process:
 
    docker build -t my-airflow-image --build-arg host_dag_path=./dags_on_host --build-arg container_dag_path=/path/on/container .
 
-If choosing to load DAGs onto a different path than
+If choosing to load Dags onto a different path than
 ``/opt/airflow/dags``, then the new path will need to be updated in the
 Airflow config.
+
+.. END LOADING_DAGS_FROM_LOCAL
+
+.. BEGIN DEPENDENCIES
 
 Installing Python Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -206,28 +225,19 @@ Uncomment the two appropriate lines in the Dockerfile that copy the
 ``requirements.txt`` file to the container, and run ``pip install`` to
 install the dependencies on the container.
 
-Building Image for AWS |executorName| Executor
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Detailed instructions on how to use the Docker image, that you have
-created via this readme, with the |executorName| Executor can be found
-:ref:`here <setup_guide>`.
-
-.. END DOCKERFILE_AUTH_SECOND_METHOD
+.. END DEPENDENCIES
 
 .. BEGIN LOGGING
 
 Logging
 -------
 
-Airflow tasks executed via this executor run in containers within
+Airflow tasks executed via this executor run within
 the configured VPC. This means that logs are not directly accessible to
-the Airflow Webserver and when containers are stopped, after task
-completion, the logs would be permanently lost.
+the Airflow UI, after task completion, the logs would be permanently lost.
 
 Remote logging should be employed when using the |executorName| executor to persist
-your Airflow Task logs and make them viewable from the Airflow
-Webserver.
+your Airflow Task logs and make them viewable from the Airflow UI.
 
 Configuring Remote Logging
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

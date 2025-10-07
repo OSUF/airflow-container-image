@@ -34,11 +34,12 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import relationship
 
+from airflow._shared.timezones import timezone
 from airflow.models.base import Base, StringID
 from airflow.settings import json
-from airflow.utils import timezone
 from airflow.utils.sqlalchemy import UtcDateTime
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from airflow.models.trigger import Trigger
     from airflow.sdk.definitions.asset import Asset, AssetAlias
 
 
@@ -134,14 +136,48 @@ asset_alias_asset_event_association_table = Table(
     Index("idx_asset_alias_asset_event_event_id", "event_id"),
 )
 
-asset_trigger_association_table = Table(
-    "asset_trigger",
-    Base.metadata,
-    Column("asset_id", ForeignKey("asset.id", ondelete="CASCADE"), primary_key=True),
-    Column("trigger_id", ForeignKey("trigger.id", ondelete="CASCADE"), primary_key=True),
-    Index("idx_asset_trigger_asset_id", "asset_id"),
-    Index("idx_asset_trigger_trigger_id", "trigger_id"),
-)
+
+class AssetWatcherModel(Base):
+    """A table to store asset watchers."""
+
+    name = Column(
+        String(length=1500).with_variant(
+            String(
+                length=1500,
+                # latin1 allows for more indexed length in mysql
+                # and this field should only be ascii chars
+                collation="latin1_general_cs",
+            ),
+            "mysql",
+        ),
+        nullable=False,
+    )
+    asset_id = Column(Integer, primary_key=True, nullable=False)
+    trigger_id = Column(Integer, primary_key=True, nullable=False)
+
+    asset = relationship("AssetModel", back_populates="watchers")
+    trigger = relationship("Trigger", back_populates="asset_watchers")
+
+    __tablename__ = "asset_watcher"
+    __table_args__ = (
+        PrimaryKeyConstraint(asset_id, trigger_id, name="asset_watcher_pkey"),
+        ForeignKeyConstraint(
+            columns=(asset_id,),
+            refcolumns=["asset.id"],
+            name="awm_asset_id_fkey",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            columns=(trigger_id,),
+            refcolumns=["trigger.id"],
+            name="awm_trigger_id_fkey",
+            ondelete="CASCADE",
+        ),
+        Index("idx_awm_trigger_id", trigger_id),
+    )
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(name={self.name!r}, asset_id={self.asset_id!r}, trigger_id={self.trigger_id!r})"
 
 
 class AssetAliasModel(Base):
@@ -194,7 +230,7 @@ class AssetAliasModel(Base):
         secondary=asset_alias_asset_event_association_table,
         back_populates="source_aliases",
     )
-    consuming_dags = relationship("DagScheduleAssetAliasReference", back_populates="asset_alias")
+    scheduled_dags = relationship("DagScheduleAssetAliasReference", back_populates="asset_alias")
 
     @classmethod
     def from_public(cls, obj: AssetAlias) -> AssetAliasModel:
@@ -272,9 +308,11 @@ class AssetModel(Base):
 
     active = relationship("AssetActive", uselist=False, viewonly=True, back_populates="asset")
 
-    consuming_dags = relationship("DagScheduleAssetReference", back_populates="asset")
+    scheduled_dags = relationship("DagScheduleAssetReference", back_populates="asset")
     producing_tasks = relationship("TaskOutletAssetReference", back_populates="asset")
-    triggers = relationship("Trigger", secondary=asset_trigger_association_table, back_populates="assets")
+    consuming_tasks = relationship("TaskInletAssetReference", back_populates="asset")
+    watchers = relationship("AssetWatcherModel", back_populates="asset", cascade="all, delete, delete-orphan")
+    triggers = association_proxy("watchers", "trigger")
 
     __tablename__ = "asset"
     __table_args__ = (
@@ -319,6 +357,9 @@ class AssetModel(Base):
         from airflow.sdk.definitions.asset import Asset
 
         return Asset(name=self.name, uri=self.uri, group=self.group, extra=self.extra)
+
+    def add_trigger(self, trigger: Trigger, watcher_name: str):
+        self.watchers.append(AssetWatcherModel(name=watcher_name, trigger_id=trigger.id))
 
 
 class AssetActive(Base):
@@ -478,7 +519,7 @@ class DagScheduleAssetAliasReference(Base):
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    asset_alias = relationship("AssetAliasModel", back_populates="consuming_dags")
+    asset_alias = relationship("AssetAliasModel", back_populates="scheduled_dags")
     dag = relationship("DagModel", back_populates="schedule_asset_alias_references")
 
     __tablename__ = "dag_schedule_asset_alias_reference"
@@ -520,7 +561,7 @@ class DagScheduleAssetReference(Base):
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    asset = relationship("AssetModel", back_populates="consuming_dags")
+    asset = relationship("AssetModel", back_populates="scheduled_dags")
     dag = relationship("DagModel", back_populates="schedule_asset_references")
 
     queue_records = relationship(
@@ -612,6 +653,50 @@ class TaskOutletAssetReference(Base):
         return f"{self.__class__.__name__}({', '.join(args)})"
 
 
+class TaskInletAssetReference(Base):
+    """References from a task to an asset that it references as an inlet."""
+
+    asset_id = Column(Integer, primary_key=True, nullable=False)
+    dag_id = Column(StringID(), primary_key=True, nullable=False)
+    task_id = Column(StringID(), primary_key=True, nullable=False)
+    created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
+    updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
+
+    asset = relationship("AssetModel", back_populates="consuming_tasks")
+
+    __tablename__ = "task_inlet_asset_reference"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            (asset_id,),
+            ["asset.id"],
+            name="tiar_asset_fkey",
+            ondelete="CASCADE",
+        ),
+        PrimaryKeyConstraint(asset_id, dag_id, task_id, name="tiar_pkey"),
+        ForeignKeyConstraint(
+            columns=(dag_id,),
+            refcolumns=["dag.dag_id"],
+            name="tiar_dag_id_fkey",
+            ondelete="CASCADE",
+        ),
+        Index("idx_task_inlet_asset_reference_dag_id", dag_id),
+    )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+        return (
+            self.asset_id == other.asset_id and self.dag_id == other.dag_id and self.task_id == other.task_id
+        )
+
+    def __hash__(self):
+        return hash(self.__mapper__.primary_key)
+
+    def __repr__(self):
+        args = (f"{(attr := x.name)}={getattr(self, attr)!r}" for x in self.__mapper__.primary_key)
+        return f"{self.__class__.__name__}({', '.join(args)})"
+
+
 class AssetDagRunQueue(Base):
     """Model for storing asset events that need processing."""
 
@@ -619,6 +704,7 @@ class AssetDagRunQueue(Base):
     target_dag_id = Column(StringID(), primary_key=True, nullable=False)
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     asset = relationship("AssetModel", viewonly=True)
+    dag_model = relationship("DagModel", viewonly=True)
 
     __tablename__ = "asset_dag_run_queue"
     __table_args__ = (

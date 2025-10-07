@@ -18,11 +18,14 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import sys
 import uuid
+from functools import cache
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import certifi
 import httpx
 import msgspec
 import structlog
@@ -40,10 +43,13 @@ from airflow.sdk.api.datamodels._generated import (
     ConnectionResponse,
     DagRunStateResponse,
     DagRunType,
+    HITLDetailResponse,
+    HITLUser,
+    InactiveAssetsResponse,
     PrevSuccessfulDagRunResponse,
+    TaskInstanceState,
     TaskStatesResponse,
     TerminalStateNonSuccess,
-    TerminalTIState,
     TIDeferredStatePayload,
     TIEnterRunningPayload,
     TIHeartbeatInfo,
@@ -58,24 +64,29 @@ from airflow.sdk.api.datamodels._generated import (
     VariablePostBody,
     VariableResponse,
     XComResponse,
+    XComSequenceIndexResponse,
+    XComSequenceSliceResponse,
 )
 from airflow.sdk.exceptions import ErrorType
 from airflow.sdk.execution_time.comms import (
+    CreateHITLDetailPayload,
     DRCount,
     ErrorResponse,
+    HITLDetailRequestResult,
     OKResponse,
+    PreviousDagRunResult,
     SkipDownstreamTasks,
     TaskRescheduleStartDate,
     TICount,
+    UpdateHITLDetail,
+    XComCountResponse,
 )
-from airflow.utils.net import get_hostname
-from airflow.utils.platform import getuser
 
 if TYPE_CHECKING:
     from datetime import datetime
+    from typing import ParamSpec
 
     from airflow.sdk.execution_time.comms import RescheduleTask
-    from airflow.typing_compat import ParamSpec
 
     P = ParamSpec("P")
     T = TypeVar("T")
@@ -89,6 +100,58 @@ if TYPE_CHECKING:
 else:
     from methodtools import lru_cache
 
+
+@cache
+def _get_fqdn(name=""):
+    """
+    Get fully qualified domain name from name.
+
+    An empty argument is interpreted as meaning the local host.
+    This is a patched version of socket.getfqdn() - see https://github.com/python/cpython/issues/49254
+    """
+    import socket
+
+    name = name.strip()
+    if not name or name == "0.0.0.0":
+        name = socket.gethostname()
+    try:
+        addrs = socket.getaddrinfo(name, None, 0, socket.SOCK_DGRAM, 0, socket.AI_CANONNAME)
+    except OSError:
+        pass
+    else:
+        for addr in addrs:
+            if addr[3]:
+                name = addr[3]
+                break
+    return name
+
+
+def get_hostname():
+    """Fetch the hostname using the callable from config or use built-in FQDN as a fallback."""
+    return conf.getimport("core", "hostname_callable", fallback=_get_fqdn)()
+
+
+@cache
+def getuser() -> str:
+    """
+    Get the username of the current user, or error with a nice error message if there's no current user.
+
+    We don't want to fall back to os.getuid() because not having a username
+    probably means the rest of the user environment is wrong (e.g. no $HOME).
+    Explicit failure is better than silently trying to work badly.
+    """
+    import getpass
+
+    try:
+        return getpass.getuser()
+    except KeyError:
+        raise ValueError(
+            "The user that Airflow is running as has no username; you must run "
+            "Airflow as a full user, with a username and home directory, "
+            "in order for it to function properly."
+        )
+
+
 log = structlog.get_logger(logger_name=__name__)
 
 __all__ = [
@@ -96,6 +159,8 @@ __all__ = [
     "ConnectionOperations",
     "ServerResponseError",
     "TaskInstanceOperations",
+    "get_hostname",
+    "getuser",
 ]
 
 
@@ -103,7 +168,6 @@ def get_json_error(response: httpx.Response):
     """Raise a ServerResponseError if we can extract error info from the error."""
     err = ServerResponseError.from_response(response)
     if err:
-        log.warning("Server error", detail=err.detail)
         raise err
 
 
@@ -146,27 +210,30 @@ class TaskInstanceOperations:
         resp = self.client.patch(f"task-instances/{id}/run", content=body.model_dump_json())
         return TIRunContext.model_validate_json(resp.read())
 
-    def finish(self, id: uuid.UUID, state: TerminalStateNonSuccess, when: datetime):
+    def finish(self, id: uuid.UUID, state: TerminalStateNonSuccess, when: datetime, rendered_map_index):
         """Tell the API server that this TI has reached a terminal state."""
-        if state == TerminalTIState.SUCCESS:
+        if state == TaskInstanceState.SUCCESS:
             raise ValueError("Logic error. SUCCESS state should call the `succeed` function instead")
         # TODO: handle the naming better. finish sounds wrong as "even" deferred is essentially finishing.
-        body = TITerminalStatePayload(end_date=when, state=TerminalStateNonSuccess(state))
+        body = TITerminalStatePayload(
+            end_date=when, state=TerminalStateNonSuccess(state), rendered_map_index=rendered_map_index
+        )
         self.client.patch(f"task-instances/{id}/state", content=body.model_dump_json())
 
-    def retry(self, id: uuid.UUID, end_date: datetime):
+    def retry(self, id: uuid.UUID, end_date: datetime, rendered_map_index):
         """Tell the API server that this TI has failed and reached a up_for_retry state."""
-        body = TIRetryStatePayload(end_date=end_date)
+        body = TIRetryStatePayload(end_date=end_date, rendered_map_index=rendered_map_index)
         self.client.patch(f"task-instances/{id}/state", content=body.model_dump_json())
 
-    def succeed(self, id: uuid.UUID, when: datetime, task_outlets, outlet_events):
+    def succeed(self, id: uuid.UUID, when: datetime, task_outlets, outlet_events, rendered_map_index):
         """Tell the API server that this TI has succeeded."""
-        body = TISuccessStatePayload(end_date=when, task_outlets=task_outlets, outlet_events=outlet_events)
+        body = TISuccessStatePayload(
+            end_date=when,
+            task_outlets=task_outlets,
+            outlet_events=outlet_events,
+            rendered_map_index=rendered_map_index,
+        )
         self.client.patch(f"task-instances/{id}/state", content=body.model_dump_json())
-
-    def heartbeat(self, id: uuid.UUID, pid: int):
-        body = TIHeartbeatInfo(pid=pid, hostname=get_hostname())
-        self.client.put(f"task-instances/{id}/heartbeat", content=body.model_dump_json())
 
     def defer(self, id: uuid.UUID, msg):
         """Tell the API server that this TI has been deferred."""
@@ -181,6 +248,10 @@ class TaskInstanceOperations:
 
         # Create a reschedule state payload from msg
         self.client.patch(f"task-instances/{id}/state", content=body.model_dump_json())
+
+    def heartbeat(self, id: uuid.UUID, pid: int):
+        body = TIHeartbeatInfo(pid=pid, hostname=get_hostname())
+        self.client.put(f"task-instances/{id}/heartbeat", content=body.model_dump_json())
 
     def skip_downstream_tasks(self, id: uuid.UUID, msg: SkipDownstreamTasks):
         """Tell the API server to skip the downstream tasks of this TI."""
@@ -220,6 +291,7 @@ class TaskInstanceOperations:
         states: list[str] | None = None,
     ) -> TICount:
         """Get count of task instances matching the given criteria."""
+        params: dict[str, Any]
         params = {
             "dag_id": dag_id,
             "task_ids": task_ids,
@@ -233,7 +305,7 @@ class TaskInstanceOperations:
         params = {k: v for k, v in params.items() if v is not None}
 
         if map_index is not None and map_index >= 0:
-            params.update({"map_index": map_index})  # type: ignore[dict-item]
+            params.update({"map_index": map_index})
 
         resp = self.client.get("task-instances/count", params=params)
         return TICount(count=resp.json())
@@ -248,6 +320,7 @@ class TaskInstanceOperations:
         run_ids: list[str] | None = None,
     ) -> TaskStatesResponse:
         """Get task states given criteria."""
+        params: dict[str, Any]
         params = {
             "dag_id": dag_id,
             "task_ids": task_ids,
@@ -260,10 +333,15 @@ class TaskInstanceOperations:
         params = {k: v for k, v in params.items() if v is not None}
 
         if map_index is not None and map_index >= 0:
-            params.update({"map_index": map_index})  # type: ignore[dict-item]
+            params.update({"map_index": map_index})
 
         resp = self.client.get("task-instances/states", params=params)
         return TaskStatesResponse.model_validate_json(resp.read())
+
+    def validate_inlets_and_outlets(self, id: uuid.UUID) -> InactiveAssetsResponse:
+        """Validate whether there're inactive assets in inlets and outlets of a given task instance."""
+        resp = self.client.get(f"task-instances/{id}/validate-inlets-and-outlets")
+        return InactiveAssetsResponse.model_validate_json(resp.read())
 
 
 class ConnectionOperations:
@@ -338,7 +416,7 @@ class XComOperations:
     def __init__(self, client: Client):
         self.client = client
 
-    def head(self, dag_id: str, run_id: str, task_id: str, key: str) -> int:
+    def head(self, dag_id: str, run_id: str, task_id: str, key: str) -> XComCountResponse:
         """Get the number of mapped XCom values."""
         resp = self.client.head(f"xcoms/{dag_id}/{run_id}/{task_id}/{key}")
 
@@ -347,7 +425,7 @@ class XComOperations:
             "map_indexes "
         ):
             raise RuntimeError(f"Unable to parse Content-Range header from HEAD {resp.request.url}")
-        return int(content_range[len("map_indexes ") :])
+        return XComCountResponse(len=int(content_range[len("map_indexes ") :]))
 
     def get(
         self,
@@ -429,6 +507,64 @@ class XComOperations:
         # decouple from the server response string
         return OKResponse(ok=True)
 
+    def get_sequence_item(
+        self,
+        dag_id: str,
+        run_id: str,
+        task_id: str,
+        key: str,
+        offset: int,
+    ) -> XComSequenceIndexResponse | ErrorResponse:
+        try:
+            resp = self.client.get(f"xcoms/{dag_id}/{run_id}/{task_id}/{key}/item/{offset}")
+        except ServerResponseError as e:
+            if e.response.status_code == HTTPStatus.NOT_FOUND:
+                log.error(
+                    "XCom not found",
+                    dag_id=dag_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    key=key,
+                    offset=offset,
+                    detail=e.detail,
+                    status_code=e.response.status_code,
+                )
+                return ErrorResponse(
+                    error=ErrorType.XCOM_NOT_FOUND,
+                    detail={
+                        "dag_id": dag_id,
+                        "run_id": run_id,
+                        "task_id": task_id,
+                        "key": key,
+                        "offset": offset,
+                    },
+                )
+            raise
+        return XComSequenceIndexResponse.model_validate_json(resp.read())
+
+    def get_sequence_slice(
+        self,
+        dag_id: str,
+        run_id: str,
+        task_id: str,
+        key: str,
+        start: int | None,
+        stop: int | None,
+        step: int | None,
+        include_prior_dates: bool = False,
+    ) -> XComSequenceSliceResponse:
+        params = {}
+        if start is not None:
+            params["start"] = start
+        if stop is not None:
+            params["stop"] = stop
+        if step is not None:
+            params["step"] = step
+        if include_prior_dates:
+            params["include_prior_dates"] = include_prior_dates
+        resp = self.client.get(f"xcoms/{dag_id}/{run_id}/{task_id}/{key}/slice", params=params)
+        return XComSequenceSliceResponse.model_validate_json(resp.read())
+
 
 class AssetOperations:
     __slots__ = ("client",)
@@ -476,7 +612,7 @@ class AssetEventOperations:
         if name or uri:
             resp = self.client.get("asset-events/by-asset", params={"name": name, "uri": uri})
         elif alias_name:
-            resp = self.client.get("asset-events/by-asset-alias", params={"name": name})
+            resp = self.client.get("asset-events/by-asset-alias", params={"name": alias_name})
         else:
             raise ValueError("Either `name`, `uri` or `alias_name` must be provided")
 
@@ -497,7 +633,7 @@ class DagRunOperations:
         logical_date: datetime | None = None,
         reset_dag_run: bool = False,
     ) -> OKResponse | ErrorResponse:
-        """Trigger a DAG run via the API server."""
+        """Trigger a Dag run via the API server."""
         body = TriggerDAGRunPayload(logical_date=logical_date, conf=conf or {}, reset_dag_run=reset_dag_run)
 
         try:
@@ -507,23 +643,23 @@ class DagRunOperations:
         except ServerResponseError as e:
             if e.response.status_code == HTTPStatus.CONFLICT:
                 if reset_dag_run:
-                    log.info("DAG Run already exists; Resetting DAG Run.", dag_id=dag_id, run_id=run_id)
+                    log.info("Dag Run already exists; Resetting Dag Run.", dag_id=dag_id, run_id=run_id)
                     return self.clear(run_id=run_id, dag_id=dag_id)
 
-                log.info("DAG Run already exists!", detail=e.detail, dag_id=dag_id, run_id=run_id)
+                log.info("Dag Run already exists!", detail=e.detail, dag_id=dag_id, run_id=run_id)
                 return ErrorResponse(error=ErrorType.DAGRUN_ALREADY_EXISTS)
             raise
 
         return OKResponse(ok=True)
 
     def clear(self, dag_id: str, run_id: str) -> OKResponse:
-        """Clear a DAG run via the API server."""
+        """Clear a Dag run via the API server."""
         self.client.post(f"dag-runs/{dag_id}/{run_id}/clear")
         # TODO: Error handling
         return OKResponse(ok=True)
 
     def get_state(self, dag_id: str, run_id: str) -> DagRunStateResponse:
-        """Get the state of a DAG run via the API server."""
+        """Get the state of a Dag run via the API server."""
         resp = self.client.get(f"dag-runs/{dag_id}/{run_id}/state")
         return DagRunStateResponse.model_validate_json(resp.read())
 
@@ -534,7 +670,7 @@ class DagRunOperations:
         run_ids: list[str] | None = None,
         states: list[str] | None = None,
     ) -> DRCount:
-        """Get count of DAG runs matching the given criteria."""
+        """Get count of Dag runs matching the given criteria."""
         params = {
             "dag_id": dag_id,
             "logical_dates": [d.isoformat() for d in logical_dates] if logical_dates is not None else None,
@@ -547,6 +683,89 @@ class DagRunOperations:
 
         resp = self.client.get("dag-runs/count", params=params)
         return DRCount(count=resp.json())
+
+    def get_previous(
+        self,
+        dag_id: str,
+        logical_date: datetime,
+        state: str | None = None,
+    ) -> PreviousDagRunResult:
+        """Get the previous DAG run before the given logical date, optionally filtered by state."""
+        params = {
+            "logical_date": logical_date.isoformat(),
+        }
+
+        if state:
+            params["state"] = state
+
+        resp = self.client.get(f"dag-runs/{dag_id}/previous", params=params)
+        return PreviousDagRunResult(dag_run=resp.json())
+
+
+class HITLOperations:
+    """
+    Operations related to Human in the loop. Require Airflow 3.1+.
+
+    :meta: private
+    """
+
+    __slots__ = ("client",)
+
+    def __init__(self, client: Client) -> None:
+        self.client = client
+
+    def add_response(
+        self,
+        *,
+        ti_id: uuid.UUID,
+        options: list[str],
+        subject: str,
+        body: str | None = None,
+        defaults: list[str] | None = None,
+        multiple: bool = False,
+        params: dict[str, Any] | None = None,
+        assigned_users: list[HITLUser] | None = None,
+    ) -> HITLDetailRequestResult:
+        """Add a Human-in-the-loop response that waits for human response for a specific Task Instance."""
+        payload = CreateHITLDetailPayload(
+            ti_id=ti_id,
+            options=options,
+            subject=subject,
+            body=body,
+            defaults=defaults,
+            multiple=multiple,
+            params=params,
+            assigned_users=assigned_users,
+        )
+        resp = self.client.post(
+            f"/hitlDetails/{ti_id}",
+            content=payload.model_dump_json(),
+        )
+        return HITLDetailRequestResult.model_validate_json(resp.read())
+
+    def update_response(
+        self,
+        *,
+        ti_id: uuid.UUID,
+        chosen_options: list[str],
+        params_input: dict[str, Any],
+    ) -> HITLDetailResponse:
+        """Update an existing Human-in-the-loop response."""
+        payload = UpdateHITLDetail(
+            ti_id=ti_id,
+            chosen_options=chosen_options,
+            params_input=params_input,
+        )
+        resp = self.client.patch(
+            f"/hitlDetails/{ti_id}",
+            content=payload.model_dump_json(),
+        )
+        return HITLDetailResponse.model_validate_json(resp.read())
+
+    def get_detail_response(self, ti_id: uuid.UUID) -> HITLDetailResponse:
+        """Get content part of a Human-in-the-loop response for a specific Task Instance."""
+        resp = self.client.get(f"/hitlDetails/{ti_id}")
+        return HITLDetailResponse.model_validate_json(resp.read())
 
 
 class BearerAuth(httpx.Auth):
@@ -590,6 +809,7 @@ def noop_handler(request: httpx.Request) -> httpx.Response:
 API_RETRIES = conf.getint("workers", "execution_api_retries")
 API_RETRY_WAIT_MIN = conf.getfloat("workers", "execution_api_retry_wait_min")
 API_RETRY_WAIT_MAX = conf.getfloat("workers", "execution_api_retry_wait_max")
+API_SSL_CERT_PATH = conf.get("api", "ssl_cert")
 
 
 class Client(httpx.Client):
@@ -605,6 +825,10 @@ class Client(httpx.Client):
             kwargs.setdefault("base_url", "dry-run://server")
         else:
             kwargs["base_url"] = base_url
+            ctx = ssl.create_default_context(cafile=certifi.where())
+            if API_SSL_CERT_PATH:
+                ctx.load_verify_locations(API_SSL_CERT_PATH)
+            kwargs["verify"] = ctx
         pyver = f"{'.'.join(map(str, sys.version_info[:3]))}"
         super().__init__(
             auth=auth,
@@ -681,6 +905,12 @@ class Client(httpx.Client):
     def asset_events(self) -> AssetEventOperations:
         """Operations related to Asset Events."""
         return AssetEventOperations(self)
+
+    @lru_cache()  # type: ignore[misc]
+    @property
+    def hitl(self):
+        """Operations related to HITL Responses."""
+        return HITLOperations(self)
 
 
 # This is only used for parsing. ServerResponseError is raised instead

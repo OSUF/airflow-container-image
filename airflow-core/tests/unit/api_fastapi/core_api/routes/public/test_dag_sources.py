@@ -24,12 +24,12 @@ import pytest
 from httpx import Response
 from sqlalchemy import select
 
-from airflow.models.dagbag import DagBag
+from airflow.models.dagbag import DBDagBag
 from airflow.models.dagcode import DagCode
-from airflow.models.serialized_dag import SerializedDagModel
 from airflow.utils.state import DagRunState
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
+from tests_common.test_utils.dag import sync_dag_to_db
 from tests_common.test_utils.db import clear_db_dags, clear_db_runs, parse_and_sync_to_db
 from unit.serialization.test_dag_serialization import AIRFLOW_REPO_ROOT_PATH
 
@@ -39,15 +39,29 @@ API_PREFIX = "/dagSources"
 
 # Example bash operator located here: airflow/example_dags/example_bash_operator.py
 EXAMPLE_DAG_FILE = (
-    AIRFLOW_REPO_ROOT_PATH / "airflow-core" / "src" / "airflow" / "example_dags" / "example_bash_operator.py"
+    AIRFLOW_REPO_ROOT_PATH / "airflow-core" / "src" / "airflow" / "example_dags" / "example_simplest_dag.py"
 )
-TEST_DAG_ID = "example_bash_operator"
+TEST_DAG_ID = "example_simplest_dag"
+TEST_DAG_DISPLAY_NAME = "example_simplest_dag"
 
 
 @pytest.fixture
-def test_dag():
-    parse_and_sync_to_db(EXAMPLE_DAG_FILE, include_examples=False)
-    return DagBag(read_dags_from_db=True).get_dag(TEST_DAG_ID)
+def real_dag_bag():
+    return parse_and_sync_to_db(EXAMPLE_DAG_FILE, include_examples=False)
+
+
+@pytest.fixture
+def test_dag(session, real_dag_bag):
+    return DBDagBag().get_latest_version_of_dag(TEST_DAG_ID, session=session)
+
+
+@pytest.fixture
+def force_reserialization(real_dag_bag, session):
+    def _force_reserialization(dag_id, bundle_name):
+        dag = real_dag_bag.get_dag(dag_id, session=session)
+        sync_dag_to_db(dag, bundle_name=bundle_name, session=session)
+
+    return _force_reserialization
 
 
 class TestGetDAGSource:
@@ -106,11 +120,12 @@ class TestGetDAGSource:
             "content": dag_content,
             "dag_id": TEST_DAG_ID,
             "version_number": 1,
+            "dag_display_name": TEST_DAG_DISPLAY_NAME,
         }
         assert response.headers["Content-Type"].startswith("application/json")
 
     @pytest.mark.parametrize("accept", ["application/json", "text/plain"])
-    def test_should_respond_200_version(self, test_client, accept, session, test_dag, testing_dag_bundle):
+    def test_should_respond_200_version(self, test_client, accept, session, test_dag, force_reserialization):
         dag_content = self._get_dag_file_code(test_dag.fileloc)
         test_dag.create_dagrun(
             run_id="test1",
@@ -121,7 +136,7 @@ class TestGetDAGSource:
         )
         # force reserialization
         test_dag.doc_md = "new doc"
-        SerializedDagModel.write_dag(test_dag, bundle_name="testing")
+        force_reserialization(test_dag.dag_id, "dag-folder")
         dagcode = (
             session.query(DagCode)
             .filter(DagCode.fileloc == test_dag.fileloc)
@@ -153,6 +168,7 @@ class TestGetDAGSource:
                 "content": dag_content2,
                 "dag_id": TEST_DAG_ID,
                 "version_number": 2,
+                "dag_display_name": TEST_DAG_DISPLAY_NAME,
             }
 
     def test_should_respond_406_unsupport_mime_type(self, test_client, test_dag):

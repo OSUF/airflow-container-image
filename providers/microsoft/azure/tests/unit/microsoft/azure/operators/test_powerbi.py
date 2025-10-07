@@ -29,16 +29,28 @@ from airflow.providers.microsoft.azure.hooks.powerbi import (
 )
 from airflow.providers.microsoft.azure.operators.powerbi import PowerBIDatasetRefreshOperator
 from airflow.providers.microsoft.azure.triggers.powerbi import PowerBITrigger
-from airflow.utils import timezone
+from airflow.providers.microsoft.azure.version_compat import BaseHook
 
 from tests_common.test_utils.mock_context import mock_context
-from unit.microsoft.azure.base import Base
 from unit.microsoft.azure.test_utils import get_airflow_connection
+
+try:
+    from airflow.sdk import timezone
+except ImportError:
+    from airflow.utils import timezone  # type: ignore[no-redef]
+
 
 DEFAULT_CONNECTION_CLIENT_SECRET = "powerbi_conn_id"
 TASK_ID = "run_powerbi_operator"
 GROUP_ID = "group_id"
 DATASET_ID = "dataset_id"
+REQUEST_BODY = {
+    "type": "full",
+    "commitMode": "transactional",
+    "objects": [{"table": "Customer", "partition": "Robert"}],
+    "applyRefreshPolicy": "false",
+    "timeout": "05:00:00",
+}
 CONFIG = {
     "task_id": TASK_ID,
     "conn_id": DEFAULT_CONNECTION_CLIENT_SECRET,
@@ -46,6 +58,7 @@ CONFIG = {
     "dataset_id": DATASET_ID,
     "check_interval": 1,
     "timeout": 3,
+    "request_body": REQUEST_BODY,
 }
 NEW_REFRESH_REQUEST_ID = "5e2d9921-e91b-491f-b7e1-e7d8db49194c"
 
@@ -84,8 +97,8 @@ IN_PROGRESS_REFRESH_DETAILS = {
 }
 
 
-class TestPowerBIDatasetRefreshOperator(Base):
-    @mock.patch("airflow.hooks.base.BaseHook.get_connection", side_effect=get_airflow_connection)
+class TestPowerBIDatasetRefreshOperator:
+    @mock.patch.object(BaseHook, "get_connection", side_effect=get_airflow_connection)
     def test_execute_wait_for_termination_with_deferrable(self, connection):
         operator = PowerBIDatasetRefreshOperator(
             **CONFIG,
@@ -98,7 +111,7 @@ class TestPowerBIDatasetRefreshOperator(Base):
         assert isinstance(exc.value.trigger, PowerBITrigger)
         assert exc.value.trigger.dataset_refresh_id is None
 
-    @mock.patch("airflow.hooks.base.BaseHook.get_connection", side_effect=get_airflow_connection)
+    @mock.patch.object(BaseHook, "get_connection", side_effect=get_airflow_connection)
     def test_powerbi_operator_async_get_refresh_status_success(self, connection):
         """Assert that get_refresh_status log success message"""
         operator = PowerBIDatasetRefreshOperator(
@@ -196,9 +209,7 @@ class TestPowerBIDatasetRefreshOperator(Base):
         ti.xcom_push(key="powerbi_dataset_refresh_id", value=NEW_REFRESH_REQUEST_ID)
         url = ti.task.operator_extra_links[0].get_link(operator=ti.task, ti_key=ti.key)
         EXPECTED_ITEM_RUN_OP_EXTRA_LINK = (
-            "https://app.powerbi.com"  # type: ignore[attr-defined]
-            f"/groups/{GROUP_ID}/datasets/{DATASET_ID}"  # type: ignore[attr-defined]
-            "/details?experience=power-bi"
+            f"https://app.powerbi.com/groups/{GROUP_ID}/datasets/{DATASET_ID}/details?experience=power-bi"
         )
 
         assert url == EXPECTED_ITEM_RUN_OP_EXTRA_LINK

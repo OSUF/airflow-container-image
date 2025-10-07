@@ -228,14 +228,14 @@ For more details, please refer to the AWS Assume Role Authentication documentati
 
     [secrets]
     backend = airflow.providers.hashicorp.secrets.vault.VaultBackend
-    backend_kwargs = {"connections_path": "airflow-connections", "variables_path": null, "mount_point": "airflow", "url": "http://127.0.0.1:8200", "auth_type": "aws_iam", "assume_role_kwargs": {"arn:aws:iam::123456789000:role/hashicorp-aws-iam-role", "RoleSessionName": "Airflow"}}
+    backend_kwargs = {"connections_path": "airflow-connections", "variables_path": null, "mount_point": "airflow", "url": "http://127.0.0.1:8200", "auth_type": "aws_iam", "assume_role_kwargs": {"RoleArn":"arn:aws:iam::123456789000:role/hashicorp-aws-iam-role", "RoleSessionName": "Airflow"}}
 
 Using multiple mount points
 """""""""""""""""""""""""""
 
 You can use multiple mount points to store your secrets. For example, you might want to store the Airflow instance configurations
 in one Vault KV engine only accessible by your Airflow deployment tools, while storing the variables and connections in another KV engine
-available to your DAGs, in order to grant them more specific Vault ACLs.
+available to your Dags, in order to grant them more specific Vault ACLs.
 
 In order to do this, you will need to setup you configuration this way:
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
@@ -27,6 +28,12 @@ from airflow.exceptions import AirflowException, AirflowNotFoundException
 from airflow.models import Connection
 from airflow.sdk.exceptions import AirflowRuntimeError, ErrorType
 from airflow.sdk.execution_time.comms import ErrorResponse
+
+from tests_common.test_utils.db import clear_db_connections
+
+if TYPE_CHECKING:
+    from airflow.models.team import Team
+    from airflow.settings import Session
 
 
 class TestConnection:
@@ -255,6 +262,23 @@ class TestConnection:
     def test_sanitize_conn_id(self, connection, expected_conn_id):
         assert connection.conn_id == expected_conn_id
 
+    @pytest.mark.parametrize(
+        "conn_type, host",
+        [
+            # same protocol to type
+            ("http", "http://host"),
+            # different protocol to type
+            ("spark", "k8s://100.68.0.1:443"),
+        ],
+    )
+    def test_connection_uri_recovery(self, conn_type, host):
+        original = Connection(conn_id="test", conn_type=conn_type, host=host)
+        uri = original.get_uri()
+
+        recovered = Connection(uri=uri)
+        assert recovered.conn_type == original.conn_type
+        assert recovered.host == original.host
+
     def test_extra_dejson(self):
         extra = (
             '{"trust_env": false, "verify": false, "stream": true, "headers":'
@@ -338,3 +362,29 @@ class TestConnection:
         # Verify the backends were called
         mock_env_backend.assert_called_once_with(conn_id="test_conn")
         mock_db_backend.assert_called_once_with(conn_id="test_conn")
+
+    @pytest.mark.db_test
+    def test_get_team_name(self, testing_team: Team, session: Session):
+        clear_db_connections()
+
+        connection = Connection(conn_id="test_conn", conn_type="test_type", team_id=testing_team.id)
+        session.add(connection)
+        session.flush()
+
+        assert Connection.get_team_name("test_conn", session=session) == "testing"
+        clear_db_connections()
+
+    @pytest.mark.db_test
+    def test_get_conn_id_to_team_name_mapping(self, testing_team: Team, session: Session):
+        clear_db_connections()
+
+        connection1 = Connection(conn_id="test_conn1", conn_type="test_type", team_id=testing_team.id)
+        connection2 = Connection(conn_id="test_conn2", conn_type="test_type")
+        session.add(connection1)
+        session.add(connection2)
+        session.flush()
+
+        assert Connection.get_conn_id_to_team_name_mapping(["test_conn1", "test_conn2"], session=session) == {
+            "test_conn1": "testing"
+        }
+        clear_db_connections()

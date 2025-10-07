@@ -79,7 +79,7 @@ apache-airflow-providers-weaviate package
 `Weaviate <https://weaviate.io/developers/weaviate>`__
 
 
-Release: 3.0.3
+Release: 3.2.3
 
 Provider package
 ----------------
@@ -90,20 +90,21 @@ All classes for this package are included in the ``airflow.providers.weaviate`` 
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation via
+You can install this package on top of an existing Airflow installation via
 ``pip install apache-airflow-providers-weaviate``.
 For the minimum Airflow version supported, see ``Requirements`` below.
 
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.10.0``.
 
-===================  ==================
+===================  =====================================
 PIP package          Version required
-===================  ==================
-``apache-airflow``   ``>=2.9.0``
+===================  =====================================
+``apache-airflow``   ``>=2.10.0``
 ``httpx``            ``>=0.25.0``
-``weaviate-client``  ``>=4.4.0``
-``pandas``           ``>=2.1.2,<2.2``
-===================  ==================
+``weaviate-client``  ``!=4.16.7,>=4.4.0``
+``pandas``           ``>=2.1.2; python_version < "3.13"``
+``pandas``           ``>=2.2.3; python_version >= "3.13"``
+===================  =====================================

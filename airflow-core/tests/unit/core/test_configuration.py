@@ -158,6 +158,17 @@ class TestConf:
 
         assert conf.has_option("testsection", "testkey")
 
+    def test_env_team(self):
+        with patch(
+            "os.environ",
+            {
+                "AIRFLOW__CELERY__RESULT_BACKEND": "FOO",
+                "AIRFLOW__UNIT_TEST_TEAM___CELERY__RESULT_BACKEND": "BAR",
+            },
+        ):
+            assert conf.get("celery", "result_backend") == "FOO"
+            assert conf.get("celery", "result_backend", team_name="unit_test_team") == "BAR"
+
     @conf_vars({("core", "percent"): "with%%inside"})
     def test_conf_as_dict(self):
         cfg_dict = conf.as_dict()
@@ -609,8 +620,8 @@ key3 = value3
         cmd_file.write_text("#!/usr/bin/env bash\necho -n difficult_unpredictable_cat_password\n")
         cmd_file.chmod(0o0555)
 
-        monkeypatch.setenv("AIRFLOW__WEBSERVER__SECRET_KEY_CMD", str(cmd_file))
-        content = conf.getsection("webserver")
+        monkeypatch.setenv("AIRFLOW__API__SECRET_KEY_CMD", str(cmd_file))
+        content = conf.getsection("api")
         assert content["secret_key"] == "difficult_unpredictable_cat_password"
 
     @pytest.mark.parametrize(
@@ -628,11 +639,13 @@ key3 = value3
         assert isinstance(section_dict[key], type)
 
     def test_command_from_env(self):
-        test_cmdenv_config = textwrap.dedent("""\
+        test_cmdenv_config = textwrap.dedent(
+            """\
             [testcmdenv]
             itsacommand=NOT OK
             notacommand=OK
-        """)
+        """
+        )
         test_cmdenv_conf = AirflowConfigParser()
         test_cmdenv_conf.read_string(test_cmdenv_config)
         test_cmdenv_conf.sensitive_config_values.add(("testcmdenv", "itsacommand"))
@@ -1038,11 +1051,14 @@ class TestDeprecatedConf:
             # Remove it so we are sure we use the right setting
             conf.remove_option("celery", "worker_concurrency")
 
-            with pytest.warns(DeprecationWarning):
+            with pytest.warns(DeprecationWarning, match="celeryd_concurrency"):
                 with mock.patch.dict("os.environ", AIRFLOW__CELERY__CELERYD_CONCURRENCY="99"):
                     assert conf.getint("celery", "worker_concurrency") == 99
 
-            with pytest.warns(DeprecationWarning), conf_vars({("celery", "celeryd_concurrency"): "99"}):
+            with (
+                pytest.warns(DeprecationWarning, match="celeryd_concurrency"),
+                conf_vars({("celery", "celeryd_concurrency"): "99"}),
+            ):
                 assert conf.getint("celery", "worker_concurrency") == 99
 
     @pytest.mark.parametrize(
@@ -1107,13 +1123,13 @@ class TestDeprecatedConf:
         ):
             conf.remove_option("celery", "result_backend")
             with conf_vars({("celery", "celery_result_backend_cmd"): "/bin/echo 99"}):
-                with pytest.warns(DeprecationWarning):
-                    tmp = None
-                    if "AIRFLOW__CELERY__RESULT_BACKEND" in os.environ:
-                        tmp = os.environ.pop("AIRFLOW__CELERY__RESULT_BACKEND")
+                tmp = None
+                if "AIRFLOW__CELERY__RESULT_BACKEND" in os.environ:
+                    tmp = os.environ.pop("AIRFLOW__CELERY__RESULT_BACKEND")
+                with pytest.warns(DeprecationWarning, match="result_backend"):
                     assert conf.getint("celery", "result_backend") == 99
-                    if tmp:
-                        os.environ["AIRFLOW__CELERY__RESULT_BACKEND"] = tmp
+                if tmp:
+                    os.environ["AIRFLOW__CELERY__RESULT_BACKEND"] = tmp
 
     def test_deprecated_values_from_conf(self):
         test_conf = AirflowConfigParser(
@@ -1133,7 +1149,7 @@ sql_alchemy_conn=sqlite://test
 
         with pytest.warns(FutureWarning):
             test_conf.validate()
-            assert test_conf.get("core", "hostname_callable") == "airflow.utils.net.getfqdn"
+        assert test_conf.get("core", "hostname_callable") == "airflow.utils.net.getfqdn"
 
     @pytest.mark.parametrize(
         "old, new",
@@ -1158,19 +1174,19 @@ sql_alchemy_conn=sqlite://test
         old_env_var = test_conf._env_var_name(old_section, old_key)
         new_env_var = test_conf._env_var_name(new_section, new_key)
 
-        with pytest.warns(FutureWarning):
-            with mock.patch.dict("os.environ", **{old_env_var: old_value}):
-                # Can't start with the new env var existing...
-                os.environ.pop(new_env_var, None)
+        with mock.patch.dict("os.environ", **{old_env_var: old_value}):
+            # Can't start with the new env var existing...
+            os.environ.pop(new_env_var, None)
 
+            with pytest.warns(FutureWarning):
                 test_conf.validate()
-                assert test_conf.get(new_section, new_key) == new_value
-                # We also need to make sure the deprecated env var is removed
-                # so that any subprocesses don't use it in place of our updated
-                # value.
-                assert old_env_var not in os.environ
-                # and make sure we track the old value as well, under the new section/key
-                assert test_conf.upgraded_values[(new_section, new_key)] == old_value
+            assert test_conf.get(new_section, new_key) == new_value
+            # We also need to make sure the deprecated env var is removed
+            # so that any subprocesses don't use it in place of our updated
+            # value.
+            assert old_env_var not in os.environ
+            # and make sure we track the old value as well, under the new section/key
+            assert test_conf.upgraded_values[(new_section, new_key)] == old_value
 
     @pytest.mark.parametrize(
         "conf_dict",
@@ -1198,10 +1214,10 @@ sql_alchemy_conn=sqlite://test
             test_conf.validate()
             return test_conf
 
-        with pytest.warns(FutureWarning):
-            with mock.patch.dict("os.environ", AIRFLOW__CORE__HOSTNAME_CALLABLE="airflow.utils.net:getfqdn"):
+        with mock.patch.dict("os.environ", AIRFLOW__CORE__HOSTNAME_CALLABLE="airflow.utils.net:getfqdn"):
+            with pytest.warns(FutureWarning):
                 test_conf = make_config()
-                assert test_conf.get("core", "hostname_callable") == "airflow.utils.net.getfqdn"
+            assert test_conf.get("core", "hostname_callable") == "airflow.utils.net.getfqdn"
 
         with reset_warning_registry():
             with warnings.catch_warnings(record=True) as warning:
@@ -1615,21 +1631,21 @@ sql_alchemy_conn=sqlite://test
     def test_as_dict_raw(self):
         test_conf = AirflowConfigParser()
         raw_dict = test_conf.as_dict(raw=True)
-        assert "%%" in raw_dict["logging"]["log_format"]
+        assert "%%" in raw_dict["logging"]["simple_log_format"]
 
     def test_as_dict_not_raw(self):
         test_conf = AirflowConfigParser()
         raw_dict = test_conf.as_dict(raw=False)
-        assert "%%" not in raw_dict["logging"]["log_format"]
+        assert "%%" not in raw_dict["logging"]["simple_log_format"]
 
     def test_default_value_raw(self):
         test_conf = AirflowConfigParser()
-        log_format = test_conf.get_default_value("logging", "log_format", raw=True)
+        log_format = test_conf.get_default_value("logging", "simple_log_format", raw=True)
         assert "%%" in log_format
 
     def test_default_value_not_raw(self):
         test_conf = AirflowConfigParser()
-        log_format = test_conf.get_default_value("logging", "log_format", raw=False)
+        log_format = test_conf.get_default_value("logging", "simple_log_format", raw=False)
         assert "%%" not in log_format
 
     def test_default_value_raw_with_fallback(self):
@@ -1710,9 +1726,10 @@ def test_sensitive_values():
     # items not matching this pattern must be added here manually
     sensitive_values = {
         ("database", "sql_alchemy_conn"),
+        ("database", "sql_alchemy_conn_async"),
         ("core", "fernet_key"),
         ("api_auth", "jwt_secret"),
-        ("webserver", "secret_key"),
+        ("api", "secret_key"),
         ("secrets", "backend_kwargs"),
         ("sentry", "sentry_dsn"),
         ("database", "sql_alchemy_engine_args"),
@@ -1723,8 +1740,9 @@ def test_sensitive_values():
         ("celery", "result_backend"),
         ("opensearch", "username"),
         ("opensearch", "password"),
+        ("webserver", "secret_key"),
     }
-    all_keys = {(s, k) for s, v in conf.configuration_description.items() for k in v.get("options")}
+    all_keys = {(s, k) for s, v in conf.configuration_description.items() for k in v["options"]}
     suspected_sensitive = {(s, k) for (s, k) in all_keys if k.endswith(("password", "kwargs"))}
     exclude_list = {
         ("aws_batch_executor", "submit_job_kwargs"),
@@ -1884,21 +1902,19 @@ class TestWriteDefaultAirflowConfigurationIfNeeded:
         new_callable=lambda: [("mysection1", "mykey1"), ("mysection2", "mykey2")],
     )
     def test_mask_conf_values(self, mock_sensitive_config_values):
-        from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
-
-        target = (
-            "airflow.sdk.execution_time.secrets_masker.mask_secret"
-            if AIRFLOW_V_3_0_PLUS
-            else "airflow.utils.log.secrets_masker.mask_secret"
-        )
-
-        with patch(target) as mock_mask_secret:
+        with (
+            patch("airflow._shared.secrets_masker.mask_secret") as mock_mask_secret_core,
+            patch("airflow.sdk.log.mask_secret") as mock_mask_secret_sdk,
+        ):
             conf.mask_secrets()
 
-            mock_mask_secret.assert_any_call("supersecret1")
-            mock_mask_secret.assert_any_call("supersecret2")
+            mock_mask_secret_core.assert_any_call("supersecret1")
+            mock_mask_secret_core.assert_any_call("supersecret2")
+            assert mock_mask_secret_core.call_count == 2
 
-            assert mock_mask_secret.call_count == 2
+            mock_mask_secret_sdk.assert_any_call("supersecret1")
+            mock_mask_secret_sdk.assert_any_call("supersecret2")
+            assert mock_mask_secret_sdk.call_count == 2
 
 
 @conf_vars({("core", "unit_test_mode"): "False"})

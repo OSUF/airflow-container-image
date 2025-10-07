@@ -19,32 +19,37 @@
 import { Flex, Box } from "@chakra-ui/react";
 import { useParams, useSearchParams } from "react-router-dom";
 
+import type { GridRunsResponse } from "openapi/requests";
 import { RunTypeIcon } from "src/components/RunTypeIcon";
+import { useGridTiSummaries } from "src/queries/useGridTISummaries.ts";
 
 import { GridButton } from "./GridButton";
 import { TaskInstancesColumn } from "./TaskInstancesColumn";
-import type { GridTask, RunWithDuration } from "./utils";
+import type { GridTask } from "./utils";
 
 const BAR_HEIGHT = 100;
 
 type Props = {
   readonly max: number;
   readonly nodes: Array<GridTask>;
-  readonly run: RunWithDuration;
+  readonly onCellClick?: () => void;
+  readonly onColumnClick?: () => void;
+  readonly run: GridRunsResponse;
 };
 
-export const Bar = ({ max, nodes, run }: Props) => {
+export const Bar = ({ max, nodes, onCellClick, onColumnClick, run }: Props) => {
   const { dagId = "", runId } = useParams();
   const [searchParams] = useSearchParams();
 
-  const isSelected = runId === run.dag_run_id;
+  const isSelected = runId === run.run_id;
 
   const search = searchParams.toString();
+  const { data: gridTISummaries } = useGridTiSummaries({ dagId, runId: run.run_id, state: run.state });
 
   return (
     <Box
-      _hover={{ bg: "blue.subtle" }}
-      bg={isSelected ? "blue.muted" : undefined}
+      _hover={{ bg: "brand.subtle" }}
+      bg={isSelected ? "brand.muted" : undefined}
       position="relative"
       transition="background-color 0.2s"
     >
@@ -52,6 +57,7 @@ export const Bar = ({ max, nodes, run }: Props) => {
         alignItems="flex-end"
         height={BAR_HEIGHT}
         justifyContent="center"
+        onClick={onColumnClick}
         pb="2px"
         px="5px"
         width="18px"
@@ -59,22 +65,27 @@ export const Bar = ({ max, nodes, run }: Props) => {
       >
         <GridButton
           alignItems="center"
-          color="white"
+          color="fg"
           dagId={dagId}
           flexDir="column"
           height={`${(run.duration / max) * BAR_HEIGHT}px`}
           justifyContent="flex-end"
           label={run.run_after}
           minHeight="14px"
-          runId={run.dag_run_id}
+          runId={run.run_id}
           searchParams={search}
           state={run.state}
           zIndex={1}
         >
-          {run.run_type !== "scheduled" && <RunTypeIcon runType={run.run_type} size="10px" />}
+          {run.run_type !== "scheduled" && <RunTypeIcon color="white" runType={run.run_type} size="10px" />}
         </GridButton>
       </Flex>
-      <TaskInstancesColumn nodes={nodes} runId={run.dag_run_id} taskInstances={run.task_instances} />
+      <TaskInstancesColumn
+        nodes={nodes}
+        onCellClick={onCellClick}
+        runId={run.run_id}
+        taskInstances={gridTISummaries?.task_instances ?? []}
+      />
     </Box>
   );
 };

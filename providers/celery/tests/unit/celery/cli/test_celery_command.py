@@ -17,10 +17,14 @@
 # under the License.
 from __future__ import annotations
 
+import contextlib
 import importlib
+import json
 import os
+import sys
+from io import StringIO
 from unittest import mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,11 +37,17 @@ from airflow.providers.celery.cli.celery_command import _run_stale_bundle_cleanu
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
-pytestmark = pytest.mark.db_test
+PY313 = sys.version_info >= (3, 13)
+
+
+@pytest.fixture(autouse=False)
+def conf_stale_bundle_cleanup_disabled():
+    with conf_vars({("dag_processor", "stale_bundle_cleanup_interval"): "0"}):
+        yield
 
 
 @pytest.mark.backend("mysql", "postgres")
-@conf_vars({("dag_processor", "stale_bundle_cleanup_interval"): 0})
+@pytest.mark.usefixtures("conf_stale_bundle_cleanup_disabled")
 class TestCeleryStopCommand:
     @classmethod
     def setup_class(cls):
@@ -119,11 +129,12 @@ class TestCeleryStopCommand:
 
 
 @pytest.mark.backend("mysql", "postgres")
-@conf_vars({("dag_processor", "stale_bundle_cleanup_interval"): 0})
+@pytest.mark.usefixtures("conf_stale_bundle_cleanup_disabled")
 class TestWorkerStart:
     @classmethod
     def setup_class(cls):
         with conf_vars({("core", "executor"): "CeleryExecutor"}):
+            importlib.reload(executor_loader)
             importlib.reload(cli_parser)
             cls.parser = cli_parser.get_parser()
 
@@ -165,10 +176,10 @@ class TestWorkerStart:
                 queues,
                 "--concurrency",
                 int(concurrency),
-                "--hostname",
-                celery_hostname,
                 "--loglevel",
                 conf.get("logging", "CELERY_LOGGING_LEVEL"),
+                "--hostname",
+                celery_hostname,
                 "--autoscale",
                 autoscale,
                 "--without-mingle",
@@ -180,7 +191,7 @@ class TestWorkerStart:
 
 
 @pytest.mark.backend("mysql", "postgres")
-@conf_vars({("dag_processor", "stale_bundle_cleanup_interval"): 0})
+@pytest.mark.usefixtures("conf_stale_bundle_cleanup_disabled")
 class TestWorkerFailure:
     @classmethod
     def setup_class(cls):
@@ -200,7 +211,7 @@ class TestWorkerFailure:
 
 
 @pytest.mark.backend("mysql", "postgres")
-@conf_vars({("dag_processor", "stale_bundle_cleanup_interval"): 0})
+@pytest.mark.usefixtures("conf_stale_bundle_cleanup_disabled")
 class TestFlowerCommand:
     @classmethod
     def setup_class(cls):
@@ -315,16 +326,31 @@ class TestFlowerCommand:
             )
         ]
         mock_pid_file.assert_has_calls([mock.call(mock_setup_locations.return_value[0], -1)])
-        assert mock_open.mock_calls == [
-            mock.call(mock_setup_locations.return_value[1], "a"),
-            mock.call().__enter__(),
-            mock.call(mock_setup_locations.return_value[2], "a"),
-            mock.call().__enter__(),
-            mock.call().truncate(0),
-            mock.call().truncate(0),
-            mock.call().__exit__(None, None, None),
-            mock.call().__exit__(None, None, None),
-        ]
+
+        if PY313:
+            assert mock_open.mock_calls == [
+                mock.call(mock_setup_locations.return_value[1], "a"),
+                mock.call().__enter__(),
+                mock.call(mock_setup_locations.return_value[2], "a"),
+                mock.call().__enter__(),
+                mock.call().truncate(0),
+                mock.call().truncate(0),
+                mock.call().__exit__(None, None, None),
+                mock.call().close(),
+                mock.call().__exit__(None, None, None),
+                mock.call().close(),
+            ]
+        else:
+            assert mock_open.mock_calls == [
+                mock.call(mock_setup_locations.return_value[1], "a"),
+                mock.call().__enter__(),
+                mock.call(mock_setup_locations.return_value[2], "a"),
+                mock.call().__enter__(),
+                mock.call().truncate(0),
+                mock.call().truncate(0),
+                mock.call().__exit__(None, None, None),
+                mock.call().__exit__(None, None, None),
+            ]
 
     @pytest.mark.skipif(AIRFLOW_V_3_0_PLUS, reason="Test requires Airflow 3.0-")
     @mock.patch("airflow.cli.commands.daemon_utils.TimeoutPIDLockFile")
@@ -345,6 +371,96 @@ class TestFlowerCommand:
         self, mock_celery_app, mock_daemon, mock_setup_locations, mock_pid_file
     ):
         self._test_run_command_daemon(mock_celery_app, mock_daemon, mock_setup_locations, mock_pid_file)
+
+
+class TestRemoteCeleryControlCommands:
+    @classmethod
+    def setup_class(cls):
+        with conf_vars({("core", "executor"): "CeleryExecutor"}):
+            importlib.reload(executor_loader)
+            importlib.reload(cli_parser)
+            cls.parser = cli_parser.get_parser()
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.inspect")
+    def test_list_celery_workers(self, mock_inspect):
+        args = self.parser.parse_args(["celery", "list-workers", "--output", "json"])
+        mock_instance = MagicMock()
+        mock_instance.active_queues.return_value = {
+            "celery@host_1": [{"name": "queue1"}, {"name": "queue2"}],
+            "celery@host_2": [{"name": "queue3"}],
+        }
+        mock_inspect.return_value = mock_instance
+        with contextlib.redirect_stdout(StringIO()) as temp_stdout:
+            celery_command.list_workers(args)
+            out = temp_stdout.getvalue()
+            celery_workers = json.loads(out)
+        for key in ["worker_name", "queues"]:
+            assert key in celery_workers[0]
+        assert any("celery@host_1" in h["worker_name"] for h in celery_workers)
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.shutdown")
+    def test_shutdown_worker(self, mock_shutdown):
+        args = self.parser.parse_args(["celery", "shutdown-worker", "-H", "celery@host_1"])
+        with patch(
+            "airflow.providers.celery.cli.celery_command._check_if_active_celery_worker", return_value=None
+        ):
+            celery_command.shutdown_worker(args)
+            mock_shutdown.assert_called_once_with(destination=["celery@host_1"])
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.broadcast")
+    def test_shutdown_all_workers(self, mock_broadcast):
+        args = self.parser.parse_args(["celery", "shutdown-all-workers", "-y"])
+        with patch(
+            "airflow.providers.celery.cli.celery_command._check_if_active_celery_worker", return_value=None
+        ):
+            celery_command.shutdown_all_workers(args)
+            mock_broadcast.assert_called_once_with("shutdown")
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.add_consumer")
+    def test_add_queue(self, mock_add_consumer):
+        args = self.parser.parse_args(["celery", "add-queue", "-q", "test1", "-H", "celery@host_1"])
+        with patch(
+            "airflow.providers.celery.cli.celery_command._check_if_active_celery_worker", return_value=None
+        ):
+            celery_command.add_queue(args)
+            mock_add_consumer.assert_called_once_with("test1", destination=["celery@host_1"])
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.cancel_consumer")
+    def test_remove_queue(self, mock_cancel_consumer):
+        args = self.parser.parse_args(["celery", "remove-queue", "-q", "test1", "-H", "celery@host_1"])
+        with patch(
+            "airflow.providers.celery.cli.celery_command._check_if_active_celery_worker", return_value=None
+        ):
+            celery_command.remove_queue(args)
+            mock_cancel_consumer.assert_called_once_with("test1", destination=["celery@host_1"])
+
+    @pytest.mark.db_test
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.cancel_consumer")
+    @mock.patch("airflow.providers.celery.executors.celery_executor.app.control.inspect")
+    def test_remove_all_queues(self, mock_inspect, mock_cancel_consumer):
+        args = self.parser.parse_args(["celery", "remove-all-queues", "-H", "celery@host_1"])
+        mock_instance = MagicMock()
+        mock_instance.active_queues.return_value = {
+            "celery@host_1": [{"name": "queue1"}, {"name": "queue2"}],
+            "celery@host_2": [{"name": "queue3"}],
+        }
+        mock_inspect.return_value = mock_instance
+        with patch(
+            "airflow.providers.celery.cli.celery_command._check_if_active_celery_worker", return_value=None
+        ):
+            celery_command.remove_all_queues(args)
+            # Verify cancel_consumer was called for each queue
+            expected_calls = [
+                mock.call("queue1", destination=["celery@host_1"]),
+                mock.call("queue2", destination=["celery@host_1"]),
+            ]
+            mock_cancel_consumer.assert_has_calls(expected_calls, any_order=True)
+            assert mock_cancel_consumer.call_count == 2
 
 
 @patch("airflow.providers.celery.cli.celery_command.Process")

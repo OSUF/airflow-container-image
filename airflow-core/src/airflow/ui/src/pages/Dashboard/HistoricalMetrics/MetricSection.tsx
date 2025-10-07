@@ -17,11 +17,12 @@
  * under the License.
  */
 import { Box, Flex, HStack, VStack, Text } from "@chakra-ui/react";
+import { useTranslation } from "react-i18next";
 import { Link as RouterLink } from "react-router-dom";
 
 import type { TaskInstanceStateCount } from "openapi/requests/types.gen";
 import { StateBadge } from "src/components/StateBadge";
-import { capitalize } from "src/utils";
+import { SearchParamsKeys } from "src/constants/searchParams";
 
 const BAR_WIDTH = 100;
 const BAR_HEIGHT = 5;
@@ -42,14 +43,17 @@ export const MetricSection = ({ endDate, kind, runs, startDate, state, total }: 
   const stateWidth = total === 0 ? 0 : (runs / total) * BAR_WIDTH;
   const remainingWidth = BAR_WIDTH - stateWidth;
 
-  const searchParams = new URLSearchParams(`?state=${state}&start_date=${startDate}`);
+  const searchParams = new URLSearchParams(
+    `?${SearchParamsKeys.STATE}=${state}&${SearchParamsKeys.START_DATE}=${startDate}`,
+  );
+  const { t: translate } = useTranslation();
 
   if (endDate !== undefined) {
-    searchParams.append("end_date", endDate);
+    searchParams.append(SearchParamsKeys.END_DATE, endDate);
   }
 
   return (
-    <VStack align="left" gap={1} mb={4} ml={0} pl={0}>
+    <VStack align="left" gap={1} ml={0} pl={0}>
       <Flex justify="space-between">
         <HStack>
           <RouterLink to={`/${kind}?${searchParams.toString()}`}>
@@ -58,12 +62,7 @@ export const MetricSection = ({ endDate, kind, runs, startDate, state, total }: 
               {runs}
             </StateBadge>
           </RouterLink>
-          <Text>
-            {state
-              .split("_")
-              .map((st) => capitalize(st))
-              .join(" ")}
-          </Text>
+          <Text>{translate(`states.${state}`)}</Text>
         </HStack>
         <Text color="fg.muted"> {statePercent}% </Text>
       </Flex>

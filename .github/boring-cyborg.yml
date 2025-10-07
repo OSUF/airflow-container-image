@@ -111,9 +111,6 @@ labelPRBasedOnFilePath:
   provider:common-sql:
     - providers/common/sql/**
 
-  provider:standard:
-    - providers/standard/**
-
   provider:databricks:
     - providers/databricks/**
 
@@ -180,6 +177,9 @@ labelPRBasedOnFilePath:
   provider:jenkins:
     - providers/jenkins/**
 
+  provider:keycloak:
+    - providers/keycloak/**
+
   provider:microsoft-azure:
     - providers/microsoft/azure/**
 
@@ -219,7 +219,7 @@ labelPRBasedOnFilePath:
   provider:opsgenie:
     - providers/opsgenie/**
 
-  provider:Oracle:
+  provider:oracle:
     - providers/oracle/**
 
   provider:pagerduty:
@@ -279,6 +279,9 @@ labelPRBasedOnFilePath:
   provider:ssh:
     - providers/ssh/**
 
+  provider:standard:
+    - providers/standard/**
+
   provider:tableau:
     - providers/tableau/**
 
@@ -329,6 +332,24 @@ labelPRBasedOnFilePath:
     - .rat-excludes
     - .readthedocs.yml
 
+  # This should be copy of the "area:dev-tools" above and should be updated when
+  # we switch maintenance branch
+  backport-to-v3-1-test:
+    - scripts/**/*
+    - dev/**/*
+    - .github/**/*
+    - Dockerfile.ci
+    - CONTRIBUTING.rst
+    - contributing-docs/**/*
+    - yamllint-config.yml
+    - .asf.yaml
+    - .bash_completion
+    - .dockerignore
+    - .hadolint.yaml
+    - .pre-commit-config.yaml
+    - .rat-excludes
+    - .readthedocs.yml
+
   kind:documentation:
     - airflow-core/docs/**/*
     - chart/docs/**/*
@@ -336,6 +357,7 @@ labelPRBasedOnFilePath:
     - providers/**/docs/**/*
     - providers-summary-docs/**/*
     - docker-stack-docs/**/*
+    - airflow-ctl/docs/**/*
 
   area:helm-chart:
     - chart/**/*
@@ -343,6 +365,60 @@ labelPRBasedOnFilePath:
   area:UI:
     - airflow-core/docs/ui.rst
     - airflow-core/src/airflow/ui/**/*
+
+  area:translations:
+    - airflow-core/src/airflow/ui/public/i18n/**/*
+
+  translation:default:
+    - airflow-core/src/airflow/ui/public/i18n/locales/en/*
+
+  translation:ar:
+    - airflow-core/src/airflow/ui/public/i18n/locales/ar/*
+
+  translation:ca:
+    - airflow-core/src/airflow/ui/public/i18n/locales/ca/*
+
+  translation:de:
+    - airflow-core/src/airflow/ui/public/i18n/locales/de/*
+
+  translation:es:
+    - airflow-core/src/airflow/ui/public/i18n/locales/es/*
+
+  translation:fr:
+    - airflow-core/src/airflow/ui/public/i18n/locales/fr/*
+
+  translation:he:
+    - airflow-core/src/airflow/ui/public/i18n/locales/he/*
+
+  translation:hi:
+    - airflow-core/src/airflow/ui/public/i18n/locales/hi/*
+
+  translation:hu:
+    - airflow-core/src/airflow/ui/public/i18n/locales/hu/*
+
+  translation:it:
+    - airflow-core/src/airflow/ui/public/i18n/locales/it/*
+
+  translation:ko:
+    - airflow-core/src/airflow/ui/public/i18n/locales/ko/*
+
+  translation:nl:
+    - airflow-core/src/airflow/ui/public/i18n/locales/nl/*
+
+  translation:pl:
+    - airflow-core/src/airflow/ui/public/i18n/locales/pl/*
+
+  translation:pt:
+    - airflow-core/src/airflow/ui/public/i18n/locales/pt/*
+
+  translation:tr:
+    - airflow-core/src/airflow/ui/public/i18n/locales/tr/*
+
+  translation:zh-CN:
+    - airflow-core/src/airflow/ui/public/i18n/locales/zh-CN/*
+
+  translation:zh-TW:
+    - airflow-core/src/airflow/ui/public/i18n/locales/zh-TW/*
 
   area:CLI:
     - airflow-core/src/airflow/cli/**/*.py
@@ -357,7 +433,7 @@ labelPRBasedOnFilePath:
 
   area:Logging:
     - airflow-core/src/airflow/config_templates/airflow_local_settings.py
-    - airflow-core/tests/unit/core/test_logging_config.py
+    - shared/logging/**/*
     - airflow-core/src/airflow/utils/log/**/*
     - airflow-core/docs/administration-and-deployment/logging-monitoring/logging-*.rst
     - airflow-core/tests/unit/utils/log/**/*
@@ -391,7 +467,6 @@ labelPRBasedOnFilePath:
 
   area:Secrets:
     - airflow-core/src/airflow/secrets/**/*
-    - airflow-core/tests/unit/secrets/**/*
     - providers/**/secrets/*
     - airflow-core/docs/security/secrets/**/*
 
@@ -431,6 +506,9 @@ labelPRBasedOnFilePath:
   area:task-sdk:
     - task-sdk/**/*
 
+  area:go-sdk:
+    - go-sdk/**/*
+
   area:db-migrations:
     - airflow-core/src/airflow/migrations/versions/*
 
@@ -462,8 +540,8 @@ firstPRWelcomeComment: >
 
   Here are some useful points:
 
-  - Pay attention to the quality of your code (ruff, mypy and type annotations). Our [pre-commits](
-  https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#prerequisites-for-pre-commit-hooks)
+  - Pay attention to the quality of your code (ruff, mypy and type annotations). Our [prek-hooks](
+  https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#prerequisites-for-prek-hooks)
   will help you with that.
 
   - In case of a new feature add useful documentation (in docstrings or in `docs/` directory).

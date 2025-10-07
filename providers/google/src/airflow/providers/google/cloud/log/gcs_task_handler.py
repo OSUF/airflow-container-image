@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING
 
 import attrs
 
-# not sure why but mypy complains on missing `storage` but it is clearly there and is importable
-from google.cloud import storage  # type: ignore[attr-defined]
+# Make mypy happy by importing as aliases
+import google.cloud.storage as storage
 
 from airflow.configuration import conf
 from airflow.exceptions import AirflowNotFoundException
@@ -61,11 +61,11 @@ class GCSRemoteLogIO(LoggingMixin):  # noqa: D101
     remote_base: str
     base_log_folder: Path = attrs.field(converter=Path)
     delete_local_copy: bool
-    project_id: str
+    project_id: str | None = None
 
-    gcp_key_path: str | None
-    gcp_keyfile_dict: dict | None
-    scopes: Collection[str] | None
+    gcp_key_path: str | None = None
+    gcp_keyfile_dict: dict | None = None
+    scopes: Collection[str] | None = _DEFAULT_SCOPESS
 
     processors = ()
 
@@ -213,9 +213,15 @@ class GCSTaskHandler(FileTaskHandler, LoggingMixin):
         gcp_keyfile_dict: dict | None = None,
         gcp_scopes: Collection[str] | None = _DEFAULT_SCOPESS,
         project_id: str = PROVIDE_PROJECT_ID,
+        max_bytes: int = 0,
+        backup_count: int = 0,
+        delay: bool = False,
         **kwargs,
-    ):
-        super().__init__(base_log_folder)
+    ) -> None:
+        # support log file size handling of FileTaskHandler
+        super().__init__(
+            base_log_folder=base_log_folder, max_bytes=max_bytes, backup_count=backup_count, delay=delay
+        )
         self.handler: logging.FileHandler | None = None
         self.log_relative_path = ""
         self.closed = False

@@ -17,35 +17,71 @@
  * under the License.
  */
 import { Box, useDisclosure } from "@chakra-ui/react";
+import { useHotkeys } from "react-hotkeys-hook";
+import { useTranslation } from "react-i18next";
 import { CgRedo } from "react-icons/cg";
 
-import type { TaskInstanceResponse } from "openapi/requests/types.gen";
+import type { LightGridTaskInstanceSummary, TaskInstanceResponse } from "openapi/requests/types.gen";
+import { ClearGroupTaskInstanceDialog } from "src/components/Clear/TaskInstance/ClearGroupTaskInstanceDialog";
+import { Tooltip } from "src/components/ui";
 import ActionButton from "src/components/ui/ActionButton";
 
 import ClearTaskInstanceDialog from "./ClearTaskInstanceDialog";
 
 type Props = {
-  readonly taskInstance: TaskInstanceResponse;
+  readonly groupTaskInstance?: LightGridTaskInstanceSummary;
+  readonly isHotkeyEnabled?: boolean;
+  readonly taskInstance?: TaskInstanceResponse;
   readonly withText?: boolean;
 };
 
-const ClearTaskInstanceButton = ({ taskInstance, withText = true }: Props) => {
+const ClearTaskInstanceButton = ({
+  groupTaskInstance,
+  isHotkeyEnabled = false,
+  taskInstance,
+  withText = true,
+}: Props) => {
   const { onClose, onOpen, open } = useDisclosure();
+  const { t: translate } = useTranslation();
+  const isGroup = groupTaskInstance && !taskInstance;
+
+  useHotkeys(
+    "shift+c",
+    () => {
+      onOpen();
+    },
+    { enabled: isHotkeyEnabled },
+  );
 
   return (
-    <Box>
-      <ActionButton
-        actionName="Clear Task Instance"
-        icon={<CgRedo />}
-        onClick={onOpen}
-        text="Clear Task Instance"
-        withText={withText}
-      />
+    <Tooltip
+      closeDelay={100}
+      content={translate("dags:runAndTaskActions.clear.buttonTooltip")}
+      disabled={!isHotkeyEnabled}
+      openDelay={100}
+    >
+      <Box>
+        <ActionButton
+          actionName={translate("dags:runAndTaskActions.clear.button", {
+            type: translate("taskInstance_one"),
+          })}
+          icon={<CgRedo />}
+          onClick={onOpen}
+          text={translate("dags:runAndTaskActions.clear.button", {
+            type: translate(isGroup ? "taskGroup" : "taskInstance_one"),
+          })}
+          withText={withText}
+        />
 
-      {open ? (
-        <ClearTaskInstanceDialog onClose={onClose} open={open} taskInstance={taskInstance} />
-      ) : undefined}
-    </Box>
+        {open && isGroup ? (
+          <ClearGroupTaskInstanceDialog onClose={onClose} open={open} taskInstance={groupTaskInstance} />
+        ) : undefined}
+
+        {open && !isGroup && taskInstance ? (
+          <ClearTaskInstanceDialog onClose={onClose} open={open} taskInstance={taskInstance} />
+        ) : undefined}
+      </Box>
+    </Tooltip>
   );
 };
 

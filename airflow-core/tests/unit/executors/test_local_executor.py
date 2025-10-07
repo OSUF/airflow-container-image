@@ -25,9 +25,10 @@ import pytest
 from kgb import spy_on
 from uuid6 import uuid7
 
+from airflow._shared.timezones import timezone
 from airflow.executors import workloads
 from airflow.executors.local_executor import LocalExecutor, _execute_work
-from airflow.utils import timezone
+from airflow.settings import Session
 from airflow.utils.state import State
 
 from tests_common.test_utils.config import conf_vars
@@ -59,6 +60,7 @@ class TestLocalExecutor:
         success_tis = [
             workloads.TaskInstance(
                 id=uuid7(),
+                dag_version_id=uuid7(),
                 task_id=f"success_{i}",
                 dag_id="mydag",
                 run_id="run1",
@@ -96,7 +98,8 @@ class TestLocalExecutor:
                         dag_rel_path="some/path",
                         log_path=None,
                         bundle_info=dict(name="hi", version="hi"),
-                    )
+                    ),
+                    session=mock.MagicMock(spec=Session),
                 )
 
             executor.queue_workload(
@@ -106,8 +109,12 @@ class TestLocalExecutor:
                     dag_rel_path="some/path",
                     log_path=None,
                     bundle_info=dict(name="hi", version="hi"),
-                )
+                ),
+                session=mock.MagicMock(spec=Session),
             )
+
+            # Process queued workloads to trigger worker spawning
+            executor._process_workloads(list(executor.queued_tasks.values()))
 
             executor.end()
 

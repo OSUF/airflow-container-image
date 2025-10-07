@@ -16,19 +16,23 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import unittest
 from datetime import datetime
 
 import pytest
 
-from airflow.models.dag import DAG
-from airflow.models.dagbag import DagBag
-from airflow.models.serialized_dag import SerializedDagModel
+from airflow.api_fastapi.common.dagbag import dag_bag_from_app
+from airflow.models.dagbag import DBDagBag
 from airflow.providers.standard.operators.empty import EmptyOperator
+from airflow.sdk import DAG
 from airflow.sdk.definitions._internal.expandinput import EXPAND_INPUT_EMPTY
 
-from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_db_serialized_dags
+from tests_common.test_utils.dag import sync_dag_to_db, sync_dags_to_db
+from tests_common.test_utils.db import (
+    clear_db_dag_bundles,
+    clear_db_dags,
+    clear_db_runs,
+    clear_db_serialized_dags,
+)
 
 pytestmark = pytest.mark.db_test
 
@@ -51,6 +55,7 @@ class TestTaskEndpoint:
         with DAG(self.dag_id, schedule=None, start_date=self.task1_start_date, doc_md="details") as dag:
             task1 = EmptyOperator(task_id=self.task_id, params={"foo": "bar"})
             task2 = EmptyOperator(task_id=self.task_id2, start_date=self.task2_start_date)
+            task1 >> task2
 
         with DAG(self.mapped_dag_id, schedule=None, start_date=self.task1_start_date) as mapped_dag:
             EmptyOperator(task_id=self.task_id3)
@@ -61,22 +66,17 @@ class TestTaskEndpoint:
         with DAG(self.unscheduled_dag_id, start_date=None, schedule=None) as unscheduled_dag:
             task4 = EmptyOperator(task_id=self.unscheduled_task_id1, params={"is_unscheduled": True})
             task5 = EmptyOperator(task_id=self.unscheduled_task_id2, params={"is_unscheduled": True})
+            task4 >> task5
 
-        task1 >> task2
-        task4 >> task5
-        dag_bag = DagBag(os.devnull, include_examples=False)
-        dag_bag.dags = {
-            dag.dag_id: dag,
-            mapped_dag.dag_id: mapped_dag,
-            unscheduled_dag.dag_id: unscheduled_dag,
-        }
-        test_client.app.state.dag_bag = dag_bag
+        sync_dags_to_db([dag, mapped_dag, unscheduled_dag])
+        test_client.app.dependency_overrides[dag_bag_from_app] = DBDagBag
 
     @staticmethod
     def clear_db():
         clear_db_runs()
         clear_db_dags()
         clear_db_serialized_dags()
+        clear_db_dag_bundles()
 
     @pytest.fixture(autouse=True)
     def setup(self, test_client) -> None:
@@ -229,13 +229,16 @@ class TestGetTask(TestTaskEndpoint):
 
     def test_should_respond_200_serialized(self, test_client, testing_dag_bundle):
         # Get the dag out of the dagbag before we patch it to an empty one
-        dag = test_client.app.state.dag_bag.get_dag(self.dag_id)
-        dag.sync_to_db()
-        SerializedDagModel.write_dag(dag, bundle_name="test_bundle")
 
-        dag_bag = DagBag(os.devnull, include_examples=False, read_dags_from_db=True)
-        patcher = unittest.mock.patch.object(test_client.app.state, "dag_bag", dag_bag)
-        patcher.start()
+        with DAG(self.dag_id, schedule=None, start_date=self.task1_start_date, doc_md="details") as dag:
+            task1 = EmptyOperator(task_id=self.task_id, params={"foo": "bar"})
+            task2 = EmptyOperator(task_id=self.task_id2, start_date=self.task2_start_date)
+            task1 >> task2
+
+        sync_dag_to_db(dag)
+
+        dag_bag = DBDagBag()
+        test_client.app.dependency_overrides[dag_bag_from_app] = lambda: dag_bag
 
         expected = {
             "class_ref": {
@@ -281,7 +284,6 @@ class TestGetTask(TestTaskEndpoint):
         )
         assert response.status_code == 200
         assert response.json() == expected
-        patcher.stop()
 
     def test_should_respond_404(self, test_client):
         task_id = "xxxx_not_existing"

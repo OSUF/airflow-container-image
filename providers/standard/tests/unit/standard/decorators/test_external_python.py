@@ -26,8 +26,17 @@ from subprocess import CalledProcessError
 
 import pytest
 
-from airflow.decorators import setup, task, teardown
-from airflow.utils import timezone
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.sdk import setup, task, teardown
+else:
+    from airflow.decorators import setup, task, teardown  # type: ignore[attr-defined,no-redef]
+
+try:
+    from airflow.utils import timezone  # type: ignore[attr-defined]
+except AttributeError:
+    from airflow.sdk import timezone
 
 pytestmark = pytest.mark.db_test
 
@@ -61,7 +70,7 @@ def venv_python_with_cloudpickle_and_dill(tmp_path_factory):
     venv_dir = tmp_path_factory.mktemp("venv_serializers")
     venv.create(venv_dir, with_pip=True)
     python_path = (venv_dir / "bin" / "python").resolve(strict=True).as_posix()
-    subprocess.call([python_path, "-m", "pip", "install", "cloudpickle", "dill"])
+    subprocess.check_call([python_path, "-m", "pip", "install", "cloudpickle", "dill"])
     return python_path
 
 
@@ -81,10 +90,11 @@ class TestExternalPythonDecorator:
             import dill  # noqa: F401
 
         with dag_maker(serialized=True):
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
 
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -106,10 +116,10 @@ class TestExternalPythonDecorator:
             import dill  # noqa: F401
 
         with dag_maker(serialized=True):
-            ret = f()
-        dag_maker.create_dagrun()
-
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+            f()
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -124,11 +134,12 @@ class TestExternalPythonDecorator:
             pass
 
         with dag_maker(serialized=True):
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
 
         with pytest.raises(CalledProcessError):
-            ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+            ti.run()
 
     def test_exception_raises_error(self, dag_maker, venv_python):
         @task.external_python(python=venv_python)
@@ -136,11 +147,12 @@ class TestExternalPythonDecorator:
             raise Exception
 
         with dag_maker(serialized=True):
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
 
         with pytest.raises(CalledProcessError):
-            ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+            ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -159,10 +171,10 @@ class TestExternalPythonDecorator:
             raise Exception
 
         with dag_maker(serialized=True):
-            ret = f(0, 1, c=True)
-        dag_maker.create_dagrun()
-
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+            f(0, 1, c=True)
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -179,10 +191,11 @@ class TestExternalPythonDecorator:
             return None
 
         with dag_maker(serialized=True):
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
 
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -199,10 +212,11 @@ class TestExternalPythonDecorator:
             return None
 
         with dag_maker(serialized=True):
-            ret = f(datetime.datetime.now(tz=datetime.timezone.utc))
-        dag_maker.create_dagrun()
+            f(datetime.datetime.now(tz=datetime.timezone.utc))
 
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        dr = dag_maker.create_dagrun()
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -222,13 +236,14 @@ class TestExternalPythonDecorator:
             return 1
 
         with dag_maker(serialized=True) as dag:
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
+        dr = dag_maker.create_dagrun()
 
         assert len(dag.task_group.children) == 1
         setup_task = dag.task_group.children["f"]
         assert setup_task.is_setup
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -248,13 +263,14 @@ class TestExternalPythonDecorator:
             return 1
 
         with dag_maker(serialized=True) as dag:
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
+        dr = dag_maker.create_dagrun()
 
         assert len(dag.task_group.children) == 1
         teardown_task = dag.task_group.children["f"]
         assert teardown_task.is_teardown
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        ti = dr.get_task_instances()[0]
+        ti.run()
 
     @pytest.mark.parametrize(
         "serializer",
@@ -275,11 +291,12 @@ class TestExternalPythonDecorator:
             return 1
 
         with dag_maker(serialized=True) as dag:
-            ret = f()
-        dag_maker.create_dagrun()
+            f()
+        dr = dag_maker.create_dagrun()
 
         assert len(dag.task_group.children) == 1
         teardown_task = dag.task_group.children["f"]
         assert teardown_task.is_teardown
         assert teardown_task.on_failure_fail_dagrun is on_failure_fail_dagrun
-        ret.operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE)
+        ti = dr.get_task_instances()[0]
+        ti.run()

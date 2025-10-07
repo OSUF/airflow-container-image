@@ -29,10 +29,19 @@ from airflow.exceptions import AirflowException, AirflowSkipException, AirflowTa
 from airflow.models import TaskInstance
 from airflow.providers.ssh.hooks.ssh import SSHHook
 from airflow.providers.ssh.operators.ssh import SSHOperator
-from airflow.utils.timezone import datetime
 from airflow.utils.types import NOTSET
 
 from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.dag import sync_dag_to_db
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_1_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.models.dag_version import DagVersion
+
+if AIRFLOW_V_3_1_PLUS:
+    from airflow.sdk.timezone import datetime
+else:
+    from airflow.utils.timezone import datetime  # type: ignore[attr-defined,no-redef]
 
 pytestmark = pytest.mark.db_test
 
@@ -263,12 +272,17 @@ class TestSSHOperator:
         ssh_exit_code = random.randrange(1, 100)
         self.exec_ssh_client_command.return_value = (ssh_exit_code, b"", b"ssh output")
 
-        with dag_maker(dag_id=f"dag_{request.node.name}"):
+        with dag_maker(dag_id=f"dag_{request.node.name}") as dag:
             task = SSHOperator(task_id="push_xcom", ssh_hook=self.hook, command=command)
         dr = dag_maker.create_dagrun(run_id="push_xcom")
-        ti = TaskInstance(task=task, run_id=dr.run_id)
+        if AIRFLOW_V_3_0_PLUS:
+            sync_dag_to_db(dag)
+            dag_version = DagVersion.get_latest_version(dag.dag_id)
+            ti = TaskInstance(task=task, run_id=dr.run_id, dag_version_id=dag_version.id)
+        else:
+            ti = TaskInstance(task=task, run_id=dr.run_id)
         with pytest.raises(AirflowException, match=f"SSH operator error: exit status = {ssh_exit_code}"):
-            ti.run()
+            dag_maker.run_ti("push_xcom", dr)
         assert ti.xcom_pull(task_ids=task.task_id, key="ssh_exit") == ssh_exit_code
 
     def test_timeout_triggers_on_kill(self, request, dag_maker):
@@ -278,18 +292,17 @@ class TestSSHOperator:
         self.exec_ssh_client_command.side_effect = command_sleep_forever
 
         with dag_maker(dag_id=f"dag_{request.node.name}"):
-            task = SSHOperator(
+            _ = SSHOperator(
                 task_id="test_timeout",
                 ssh_hook=self.hook,
                 command="sleep 100",
                 execution_timeout=timedelta(seconds=1),
             )
         dr = dag_maker.create_dagrun(run_id="test_timeout")
-        ti = TaskInstance(task=task, run_id=dr.run_id)
 
         with mock.patch.object(SSHOperator, "on_kill") as mock_on_kill:
             with pytest.raises(AirflowTaskTimeout):
-                ti.run()
+                dag_maker.run_ti("test_timeout", dr)
 
             # Wait a bit to ensure on_kill has time to be called
             time.sleep(1)

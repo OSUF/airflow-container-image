@@ -21,26 +21,28 @@ import datetime as dt
 import itertools
 import os
 from datetime import timedelta
+from typing import TYPE_CHECKING
 from unittest import mock
 
 import pendulum
 import pytest
 from sqlalchemy import select
 
+from airflow._shared.timezones.timezone import datetime
 from airflow.dag_processing.bundles.manager import DagBundlesManager
+from airflow.dag_processing.dagbag import DagBag, sync_bag_to_db
 from airflow.jobs.job import Job
 from airflow.jobs.triggerer_job_runner import TriggererJobRunner
 from airflow.listeners.listener import get_listener_manager
-from airflow.models import DagRun, TaskInstance
-from airflow.models.baseoperator import BaseOperator
-from airflow.models.dagbag import DagBag
+from airflow.models import DagRun, Log, TaskInstance
+from airflow.models.dag_version import DagVersion
 from airflow.models.renderedtifields import RenderedTaskInstanceFields as RTIF
 from airflow.models.taskinstancehistory import TaskInstanceHistory
 from airflow.models.taskmap import TaskMap
 from airflow.models.trigger import Trigger
+from airflow.sdk import BaseOperator
 from airflow.utils.platform import getuser
 from airflow.utils.state import DagRunState, State, TaskInstanceState
-from airflow.utils.timezone import datetime
 from airflow.utils.types import DagRunType
 
 from tests_common.test_utils.api_fastapi import _check_task_instance_note
@@ -101,7 +103,7 @@ class TestTaskInstanceEndpoint:
         with_ti_history=False,
     ):
         """Method to create task instances using kwargs and default arguments"""
-        dag = self.dagbag.get_dag(dag_id)
+        dag = self.dagbag.get_latest_version_of_dag(dag_id, session=session)
         tasks = dag.tasks
         counter = len(tasks)
         if task_instances is not None:
@@ -110,7 +112,7 @@ class TestTaskInstanceEndpoint:
         run_id = "TEST_DAG_RUN_ID"
         logical_date = self.ti_init.pop("logical_date", self.default_time)
         dr = None
-
+        dag_version = DagVersion.get_latest_version(dag.dag_id, session=session)
         tis = []
         for i in range(counter):
             if task_instances is None:
@@ -135,7 +137,9 @@ class TestTaskInstanceEndpoint:
                 )
                 session.add(dr)
                 session.flush()
-            ti = TaskInstance(task=tasks[i], **self.ti_init)
+            if TYPE_CHECKING:
+                assert dag_version
+            ti = TaskInstance(task=tasks[i], **self.ti_init, dag_version_id=dag_version.id)
             session.add(ti)
             ti.dag_run = dr
             ti.note = "placeholder-note"
@@ -178,7 +182,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
         assert response.status_code == 200
         assert response.json() == {
             "dag_id": "example_python_operator",
-            "dag_version": None,
+            "dag_version": mock.ANY,
             "dag_display_name": "example_python_operator",
             "duration": 10000.0,
             "end_date": "2020-01-03T00:00:00Z",
@@ -191,6 +195,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "max_tries": 0,
             "note": "placeholder-note",
             "operator": None,
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -211,6 +216,17 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "trigger": None,
             "triggerer_job": None,
         }
+
+    def test_should_respond_200_with_decorator(self, test_client, session):
+        self.create_task_instances(session, "example_python_decorator")
+        response = test_client.get(
+            "/dags/example_python_decorator/dagRuns/TEST_DAG_RUN_ID/taskInstances/print_the_context"
+        )
+
+        assert response.status_code == 200
+        response_json = response.json()
+        assert response_json["operator_name"] == "@task"
+        assert response_json["operator"] == "_PythonDecoratedOperator"
 
     def test_should_respond_401(self, unauthenticated_test_client):
         response = unauthenticated_test_client.get(
@@ -233,7 +249,11 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
         ],
     )
     @pytest.mark.usefixtures("make_dag_with_multiple_versions")
-    def test_should_respond_200_with_versions(self, test_client, run_id, expected_version_number):
+    @mock.patch("airflow.api_fastapi.core_api.datamodels.dag_versions.hasattr")
+    def test_should_respond_200_with_versions(
+        self, mock_hasattr, test_client, run_id, expected_version_number
+    ):
+        mock_hasattr.return_value = False
         response = test_client.get(f"/dags/dag_with_multiple_versions/dagRuns/{run_id}/taskInstances/task1")
 
         assert response.status_code == 200
@@ -259,6 +279,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "queue": "default",
             "priority_weight": 1,
             "operator": "EmptyOperator",
+            "operator_name": "EmptyOperator",
             "queued_when": None,
             "scheduled_when": None,
             "pid": None,
@@ -274,9 +295,10 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
                 "id": mock.ANY,
                 "version_number": expected_version_number,
                 "dag_id": "dag_with_multiple_versions",
+                "dag_display_name": "dag_with_multiple_versions",
                 "bundle_name": "dag_maker",
                 "bundle_version": f"some_commit_hash{expected_version_number}",
-                "bundle_url": f"fakeprotocol://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
+                "bundle_url": f"http://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
                 "created_at": mock.ANY,
             },
         }
@@ -309,7 +331,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
         assert response.status_code == 200
         assert data == {
             "dag_id": "example_python_operator",
-            "dag_version": None,
+            "dag_version": mock.ANY,
             "dag_display_name": "example_python_operator",
             "duration": 10000.0,
             "end_date": "2020-01-03T00:00:00Z",
@@ -322,6 +344,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "max_tries": 0,
             "note": "placeholder-note",
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -344,6 +367,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
                 "kwargs": "{}",
             },
             "triggerer_job": {
+                "dag_display_name": None,
                 "dag_id": None,
                 "end_date": None,
                 "job_type": "TriggererJob",
@@ -360,7 +384,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
         assert response.status_code == 200
         assert response.json() == {
             "dag_id": "example_python_operator",
-            "dag_version": None,
+            "dag_version": mock.ANY,
             "dag_display_name": "example_python_operator",
             "duration": 10000.0,
             "end_date": "2020-01-03T00:00:00Z",
@@ -373,6 +397,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "max_tries": 0,
             "note": "placeholder-note",
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -407,7 +432,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
 
         assert response.json() == {
             "dag_id": "example_python_operator",
-            "dag_version": None,
+            "dag_version": mock.ANY,
             "dag_display_name": "example_python_operator",
             "duration": 10000.0,
             "end_date": "2020-01-03T00:00:00Z",
@@ -420,6 +445,7 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
             "max_tries": 0,
             "note": "placeholder-note",
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -456,7 +482,9 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
         old_ti = tis[0]
 
         for index in range(3):
-            ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=index)
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=index, dag_version_id=old_ti.dag_version_id
+            )
             for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
                 setattr(ti, attr, getattr(old_ti, attr))
             session.add(ti)
@@ -474,7 +502,9 @@ class TestGetTaskInstance(TestTaskInstanceEndpoint):
 
         old_ti = tis[0]
 
-        ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=2)
+        ti = TaskInstance(
+            task=old_ti.task, run_id=old_ti.run_id, map_index=2, dag_version_id=old_ti.dag_version_id
+        )
         for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
             setattr(ti, attr, getattr(old_ti, attr))
         session.add(ti)
@@ -494,7 +524,9 @@ class TestGetMappedTaskInstance(TestTaskInstanceEndpoint):
         tis = self.create_task_instances(session)
         old_ti = tis[0]
         for idx in (1, 2):
-            ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=idx)
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=idx, dag_version_id=old_ti.dag_version_id
+            )
             ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
             for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
                 setattr(ti, attr, getattr(old_ti, attr))
@@ -511,7 +543,7 @@ class TestGetMappedTaskInstance(TestTaskInstanceEndpoint):
 
             assert response.json() == {
                 "dag_id": "example_python_operator",
-                "dag_version": None,
+                "dag_version": mock.ANY,
                 "dag_display_name": "example_python_operator",
                 "duration": 10000.0,
                 "end_date": "2020-01-03T00:00:00Z",
@@ -524,6 +556,7 @@ class TestGetMappedTaskInstance(TestTaskInstanceEndpoint):
                 "max_tries": 0,
                 "note": "placeholder-note",
                 "operator": "PythonOperator",
+                "operator_name": "PythonOperator",
                 "pid": 100,
                 "pool": "default_pool",
                 "pool_slots": 1,
@@ -592,7 +625,9 @@ class TestGetMappedTaskInstances:
     def create_dag_runs_with_mapped_tasks(self, dag_maker, session, dags=None):
         for dag_id, dag in (dags or {}).items():
             count = dag["success"] + dag["running"]
-            with dag_maker(session=session, dag_id=dag_id, start_date=DEFAULT_DATETIME_1):
+            with dag_maker(
+                session=session, dag_id=dag_id, start_date=DEFAULT_DATETIME_1, serialized=True
+            ) as sdag:
                 task1 = BaseOperator(task_id="op1")
                 mapped = MockOperator.partial(task_id="task_2", executor="default").expand(arg2=task1.output)
 
@@ -601,7 +636,7 @@ class TestGetMappedTaskInstances:
                 logical_date=DEFAULT_DATETIME_1,
                 data_interval=(DEFAULT_DATETIME_1, DEFAULT_DATETIME_2),
             )
-
+            dag_version = DagVersion.get_latest_version(dag_id)
             session.add(
                 TaskMap(
                     dag_id=dr.dag_id,
@@ -628,17 +663,19 @@ class TestGetMappedTaskInstances:
                     itertools.repeat(TaskInstanceState.RUNNING, dag["running"]),
                 )
             ):
-                ti = TaskInstance(mapped, run_id=dr.run_id, map_index=index, state=state)
+                ti = TaskInstance(
+                    mapped, run_id=dr.run_id, map_index=index, state=state, dag_version_id=dag_version.id
+                )
                 setattr(ti, "start_date", DEFAULT_DATETIME_1)
                 session.add(ti)
 
             DagBundlesManager().sync_bundles_to_db()
             dagbag = DagBag(os.devnull, include_examples=False)
             dagbag.dags = {dag_id: dag_maker.dag}
-            dagbag.sync_to_db("dags-folder", None)
+            sync_bag_to_db(dagbag, "dags-folder", None)
             session.flush()
 
-            TaskMap.expand_mapped_task(mapped, dr.run_id, session=session)
+            TaskMap.expand_mapped_task(sdag.task_dict[mapped.task_id], dr.run_id, session=session)
 
     @pytest.fixture
     def one_task_with_mapped_tis(self, dag_maker, session):
@@ -713,7 +750,7 @@ class TestGetMappedTaskInstances:
             "/dags/mapped_tis/dagRuns/run_mapped_tis/taskInstances/task_2/listMapped",
         )
         assert response.status_code == 404
-        assert response.json() == {"detail": "DAG mapped_tis not found"}
+        assert response.json() == {"detail": "The Dag with ID: `mapped_tis` was not found"}
 
     def test_should_respond_200(self, one_task_with_many_mapped_tis, test_client):
         response = test_client.get(
@@ -847,6 +884,8 @@ class TestGetMappedTaskInstances:
             ({"queue": "test_queue"}, 0, 0),
             ({"executor": "default"}, 3, 3),
             ({"executor": "no_exec"}, 0, 0),
+            ({"map_index": [0, 1]}, 2, 2),
+            ({"map_index": [5]}, 0, 0),
         ],
     )
     def test_mapped_task_instances_filters(
@@ -915,6 +954,21 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
             ),
             pytest.param(
                 [
+                    {"start_date": DEFAULT_DATETIME_1},
+                    {"start_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1)},
+                    {"start_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2)},
+                ],
+                True,
+                "/dags/example_python_operator/dagRuns/~/taskInstances",
+                {
+                    "start_date_gt": (DEFAULT_DATETIME_1 - dt.timedelta(hours=1)).isoformat(),
+                    "start_date_lt": DEFAULT_DATETIME_STR_2,
+                },
+                1,
+                id="test start date gt and lt filter",
+            ),
+            pytest.param(
+                [
                     {"end_date": DEFAULT_DATETIME_1},
                     {"end_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1)},
                     {"end_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2)},
@@ -924,6 +978,21 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
                 {"end_date_gte": DEFAULT_DATETIME_1, "end_date_lte": DEFAULT_DATETIME_STR_2},
                 2,
                 id="test end date filter",
+            ),
+            pytest.param(
+                [
+                    {"end_date": DEFAULT_DATETIME_1},
+                    {"end_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1)},
+                    {"end_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2)},
+                ],
+                True,
+                "/dags/example_python_operator/dagRuns/~/taskInstances?",
+                {
+                    "end_date_gt": DEFAULT_DATETIME_1,
+                    "end_date_lt": (DEFAULT_DATETIME_2 + dt.timedelta(hours=1)).isoformat(),
+                },
+                1,
+                id="test end date gt and lt filter",
             ),
             pytest.param(
                 [
@@ -951,6 +1020,18 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
             ),
             pytest.param(
                 [
+                    {"duration": 100},
+                    {"duration": 150},
+                    {"duration": 200},
+                ],
+                True,
+                "/dags/~/dagRuns/~/taskInstances",
+                {"duration_gt": 100, "duration_lt": 200},
+                1,
+                id="test duration gt and lt filter ~",
+            ),
+            pytest.param(
+                [
                     {"state": State.RUNNING},
                     {"state": State.QUEUED},
                     {"state": State.SUCCESS},
@@ -964,6 +1045,19 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
             ),
             pytest.param(
                 [
+                    {"state": State.RUNNING},
+                    {"state": State.QUEUED},
+                    {"state": State.SUCCESS},
+                    {"state": State.NONE},
+                ],
+                False,
+                ("/dags/example_python_operator/dagRuns/TEST_DAG_RUN_ID/taskInstances"),
+                {"state": ["no_status"]},
+                1,
+                id="test no_status state filter",
+            ),
+            pytest.param(
+                [
                     {"state": State.NONE},
                     {"state": State.NONE},
                     {"state": State.NONE},
@@ -974,6 +1068,14 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
                 {},
                 4,
                 id="test null states with no filter",
+            ),
+            pytest.param(
+                [{"start_date": None, "end_date": None}],
+                True,
+                "/dags/example_python_operator/dagRuns/TEST_DAG_RUN_ID/taskInstances",
+                {"start_date_gte": DEFAULT_DATETIME_STR_1},
+                1,
+                id="test start_date coalesce with null",
             ),
             pytest.param(
                 [
@@ -1088,8 +1190,91 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
                 True,
                 ("/dags/~/dagRuns/~/taskInstances"),
                 {"version_number": [1, 2, 3]},
-                6,
+                7,  # apart from the TIs in the fixture, we also get one from
+                # the create_task_instances method
                 id="test multiple version numbers filter",
+            ),
+            pytest.param(
+                [
+                    {"try_number": 0},
+                    {"try_number": 0},
+                    {"try_number": 1},
+                    {"try_number": 1},
+                    {"try_number": 1},
+                    {"try_number": 2},
+                ],
+                True,
+                ("/dags/example_python_operator/dagRuns/TEST_DAG_RUN_ID/taskInstances"),
+                {"try_number": [0, 1]},
+                5,
+                id="test_try_number_filter",
+            ),
+            pytest.param(
+                [
+                    {"operator": "FirstOperator"},
+                    {"operator": "FirstOperator"},
+                    {"operator": "SecondOperator"},
+                    {"operator": "SecondOperator"},
+                    {"operator": "SecondOperator"},
+                    {"operator": "ThirdOperator"},
+                    {"operator": "ThirdOperator"},
+                    {"operator": "ThirdOperator"},
+                    {"operator": "ThirdOperator"},
+                ],
+                True,
+                ("/dags/~/dagRuns/~/taskInstances"),
+                {"operator": ["FirstOperator", "SecondOperator"]},
+                5,
+                id="test operator type filter filter",
+            ),
+            pytest.param(
+                [
+                    {"map_index": 0},
+                    {"map_index": 1},
+                    {"map_index": 2},
+                    {"map_index": 3},
+                    {"map_index": 4},
+                    {"map_index": 5},
+                    {"map_index": 6},
+                    {"map_index": 7},
+                ],
+                True,
+                ("/dags/~/dagRuns/~/taskInstances"),
+                {"map_index": [0, 1]},
+                2,
+                id="test map_index filter",
+            ),
+            pytest.param(
+                "dag_id_pattern_test",  # Special marker for multi-DAG test
+                False,
+                "/dags/~/dagRuns/~/taskInstances",
+                {"dag_id_pattern": "example_python_operator"},
+                9,  # Based on test failure - example_python_operator creates 9 task instances
+                id="test dag_id_pattern exact match",
+            ),
+            pytest.param(
+                "dag_id_pattern_test",  # Special marker for multi-DAG test
+                False,
+                "/dags/~/dagRuns/~/taskInstances",
+                {"dag_id_pattern": "example_%"},
+                17,  # Based on test failure - both DAGs together create 17 task instances
+                id="test dag_id_pattern wildcard prefix",
+            ),
+            pytest.param(
+                "dag_id_pattern_test",  # Special marker for multi-DAG test
+                False,
+                "/dags/~/dagRuns/~/taskInstances",
+                {"dag_id_pattern": "%skip%"},
+                8,  # Based on test failure - example_skip_dag creates 8 task instances
+                id="test dag_id_pattern wildcard contains",
+            ),
+            pytest.param(
+                "dag_id_pattern_test",  # Special marker for multi-DAG test
+                False,
+                "/dags/~/dagRuns/~/taskInstances",
+                {"dag_id_pattern": "nonexistent"},
+                0,
+                id="test dag_id_pattern no match",
             ),
         ],
     )
@@ -1097,12 +1282,22 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
     def test_should_respond_200(
         self, test_client, task_instances, update_extras, url, params, expected_ti, session
     ):
-        self.create_task_instances(
-            session,
-            update_extras=update_extras,
-            task_instances=task_instances,
-        )
-        response = test_client.get(url, params=params)
+        # Special handling for dag_id_pattern tests that require multiple DAGs
+        if task_instances == "dag_id_pattern_test":
+            # Create task instances for multiple DAGs like the original test_dag_id_pattern_filter
+            dag1_id = "example_python_operator"
+            dag2_id = "example_skip_dag"
+            self.create_task_instances(session, dag_id=dag1_id)
+            self.create_task_instances(session, dag_id=dag2_id)
+        else:
+            self.create_task_instances(
+                session,
+                update_extras=update_extras,
+                task_instances=task_instances,
+            )
+        with mock.patch("airflow.api_fastapi.core_api.datamodels.dag_versions.DagBundlesManager"):
+            # Mock DagBundlesManager to avoid checking if dags-folder bundle is configured
+            response = test_client.get(url, params=params)
         if params == {"task_id_pattern": "task_match_id"}:
             import pprint
 
@@ -1126,7 +1321,7 @@ class TestGetTaskInstances(TestTaskInstanceEndpoint):
     def test_not_found(self, test_client):
         response = test_client.get("/dags/invalid/dagRuns/~/taskInstances")
         assert response.status_code == 404
-        assert response.json() == {"detail": "DAG with dag_id: `invalid` was not found"}
+        assert response.json() == {"detail": "The Dag with ID: `invalid` was not found"}
 
         response = test_client.get("/dags/~/dagRuns/invalid/taskInstances")
         assert response.status_code == 404
@@ -1336,7 +1531,13 @@ class TestGetTaskDependencies(TestTaskInstanceEndpoint):
         )
         old_ti = tis[0]
 
-        ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=0, state=old_ti.state)
+        ti = TaskInstance(
+            task=old_ti.task,
+            run_id=old_ti.run_id,
+            map_index=0,
+            state=old_ti.state,
+            dag_version_id=old_ti.dag_version_id,
+        )
         session.add(ti)
         session.commit()
 
@@ -1687,6 +1888,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "map_index": -1,
             "max_tries": 0,
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -1701,7 +1903,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "try_number": 1,
             "unixname": getuser(),
             "dag_run_id": "TEST_DAG_RUN_ID",
-            "dag_version": None,
+            "dag_version": mock.ANY,
         }
 
     @pytest.mark.parametrize("try_number", [1, 2])
@@ -1723,6 +1925,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "map_index": -1,
             "max_tries": 0 if try_number == 1 else 1,
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -1737,7 +1940,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "try_number": try_number,
             "unixname": getuser(),
             "dag_run_id": "TEST_DAG_RUN_ID",
-            "dag_version": None,
+            "dag_version": mock.ANY,
         }
 
     @pytest.mark.parametrize("try_number", [1, 2])
@@ -1747,7 +1950,9 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
         tis = self.create_task_instances(session, task_instances=[{"state": State.FAILED}])
         old_ti = tis[0]
         for idx in (1, 2):
-            ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=idx)
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=idx, dag_version_id=old_ti.dag_version_id
+            )
             ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
             ti.try_number = 1
             for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
@@ -1788,6 +1993,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
                 "map_index": map_index,
                 "max_tries": 0 if try_number == 1 else 1,
                 "operator": "PythonOperator",
+                "operator_name": "PythonOperator",
                 "pid": 100,
                 "pool": "default_pool",
                 "pool_slots": 1,
@@ -1802,7 +2008,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
                 "try_number": try_number,
                 "unixname": getuser(),
                 "dag_run_id": "TEST_DAG_RUN_ID",
-                "dag_version": None,
+                "dag_version": mock.ANY,
             }
 
     def test_should_respond_200_with_task_state_in_deferred(self, test_client, session):
@@ -1851,6 +2057,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "map_index": -1,
             "max_tries": 0,
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -1865,7 +2072,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "try_number": 1,
             "unixname": getuser(),
             "dag_run_id": "TEST_DAG_RUN_ID",
-            "dag_version": None,
+            "dag_version": mock.ANY,
         }
 
     def test_should_respond_200_with_task_state_in_removed(self, test_client, session):
@@ -1888,6 +2095,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "map_index": -1,
             "max_tries": 0,
             "operator": "PythonOperator",
+            "operator_name": "PythonOperator",
             "pid": 100,
             "pool": "default_pool",
             "pool_slots": 1,
@@ -1902,7 +2110,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "try_number": 1,
             "unixname": getuser(),
             "dag_run_id": "TEST_DAG_RUN_ID",
-            "dag_version": None,
+            "dag_version": mock.ANY,
         }
 
     def test_should_respond_401(self, unauthenticated_test_client):
@@ -1937,7 +2145,11 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
         ],
     )
     @pytest.mark.usefixtures("make_dag_with_multiple_versions")
-    def test_should_respond_200_with_versions(self, test_client, run_id, expected_version_number):
+    @mock.patch("airflow.api_fastapi.core_api.datamodels.dag_versions.hasattr")
+    def test_should_respond_200_with_versions(
+        self, mock_hasattr, test_client, run_id, expected_version_number, session
+    ):
+        mock_hasattr.return_value = False
         response = test_client.get(
             f"/dags/dag_with_multiple_versions/dagRuns/{run_id}/taskInstances/task1/tries/0"
         )
@@ -1962,6 +2174,7 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
             "queue": "default",
             "priority_weight": 1,
             "operator": "EmptyOperator",
+            "operator_name": "EmptyOperator",
             "queued_when": None,
             "scheduled_when": None,
             "pid": None,
@@ -1973,10 +2186,87 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
                 "dag_id": "dag_with_multiple_versions",
                 "bundle_name": "dag_maker",
                 "bundle_version": f"some_commit_hash{expected_version_number}",
-                "bundle_url": f"fakeprotocol://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
+                "bundle_url": f"http://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
                 "created_at": mock.ANY,
+                "dag_display_name": "dag_with_multiple_versions",
             },
         }
+
+    @pytest.mark.parametrize(
+        "run_id, expected_version_number",
+        [
+            ("run1", 1),
+            ("run2", 2),
+            ("run3", 3),
+        ],
+    )
+    @pytest.mark.usefixtures("make_dag_with_multiple_versions")
+    def test_should_respond_200_with_versions_using_url_template(
+        self, test_client, run_id, expected_version_number, session
+    ):
+        response = test_client.get(
+            f"/dags/dag_with_multiple_versions/dagRuns/{run_id}/taskInstances/task1/tries/0"
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "task_id": "task1",
+            "dag_id": "dag_with_multiple_versions",
+            "dag_display_name": "dag_with_multiple_versions",
+            "dag_run_id": run_id,
+            "map_index": -1,
+            "start_date": None,
+            "end_date": mock.ANY,
+            "duration": None,
+            "state": None,
+            "try_number": 0,
+            "max_tries": 0,
+            "task_display_name": "task1",
+            "hostname": "",
+            "unixname": getuser(),
+            "pool": "default_pool",
+            "pool_slots": 1,
+            "queue": "default",
+            "priority_weight": 1,
+            "operator": "EmptyOperator",
+            "operator_name": "EmptyOperator",
+            "queued_when": None,
+            "scheduled_when": None,
+            "pid": None,
+            "executor": None,
+            "executor_config": "{}",
+            "dag_version": {
+                "id": mock.ANY,
+                "version_number": expected_version_number,
+                "dag_id": "dag_with_multiple_versions",
+                "bundle_name": "dag_maker",
+                "bundle_version": f"some_commit_hash{expected_version_number}",
+                "bundle_url": f"http://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
+                "created_at": mock.ANY,
+                "dag_display_name": "dag_with_multiple_versions",
+            },
+        }
+
+    def test_should_not_return_duplicate_runs(self, test_client, session):
+        """
+        Test that ensures the task instances query doesn't return duplicates due to the updated join/filter logic.
+        """
+        self.create_task_instances(session, task_instances=[{"state": State.SUCCESS}], with_ti_history=True)
+        self.create_task_instances(
+            session,
+            dag_id="example_bash_operator",
+            task_instances=[{"state": State.SUCCESS}],
+            with_ti_history=True,
+        )
+
+        response = test_client.get(
+            "/dags/example_python_operator/dagRuns/TEST_DAG_RUN_ID/taskInstances/print_the_context/tries"
+        )
+
+        assert response.status_code == 200
+
+        response = response.json()
+
+        assert response["total_entries"] == 2
 
 
 class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
@@ -2154,17 +2444,18 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             task_instances=task_instances,
             update_extras=False,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{request_dag}/clearTaskInstances",
             json=payload,
         )
         assert response.status_code == 200
         assert response.json()["total_entries"] == expected_ti
-        check_last_log(session, dag_id=request_dag, event="post_clear_task_instances", logical_date=None)
+
+        if not payload.get("dry_run", True):
+            check_last_log(session, dag_id=request_dag, event="post_clear_task_instances", logical_date=None)
 
     @pytest.mark.parametrize("flag", ["include_future", "include_past"])
-    def test_dag_run_with_future_or_past_flag_returns_400(self, test_client, session, flag):
+    def test_manual_run_with_none_logical_date_returns_400(self, test_client, session, flag):
         dag_id = "example_python_operator"
         payload = {
             "dry_run": True,
@@ -2172,7 +2463,7 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             "only_failed": True,
             flag: True,
         }
-        task_instances = [{"logical_date": DEFAULT_DATETIME_1, "state": State.FAILED}]
+        task_instances = [{"logical_date": None, "state": State.FAILED}]
         self.create_task_instances(
             session,
             dag_id=dag_id,
@@ -2180,13 +2471,78 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             update_extras=False,
             dag_run_state=State.FAILED,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(f"/dags/{dag_id}/clearTaskInstances", json=payload)
         assert response.status_code == 400
         assert (
-            "Cannot use include_past or include_future when dag_run_id is provided"
+            "Cannot use include_past or include_future with no logical_date(e.g. manually or asset-triggered)."
             in response.json()["detail"]
         )
+
+    @pytest.mark.parametrize(
+        "flag, expected",
+        [
+            ("include_past", 2),  # T0 ~ T1
+            ("include_future", 2),  # T1 ~ T2
+        ],
+    )
+    def test_with_dag_run_id_and_past_future_converts_to_date_range(
+        self, test_client, session, flag, expected
+    ):
+        dag_id = "example_python_operator"
+        task_instances = [
+            {"logical_date": DEFAULT_DATETIME_1, "state": State.FAILED},  # T0
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1), "state": State.FAILED},  # T1
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2), "state": State.FAILED},  # T2
+        ]
+        self.create_task_instances(session, dag_id=dag_id, task_instances=task_instances, update_extras=False)
+        payload = {
+            "dry_run": True,
+            "only_failed": True,
+            "dag_run_id": "TEST_DAG_RUN_ID_1",
+            flag: True,
+        }
+        resp = test_client.post(f"/dags/{dag_id}/clearTaskInstances", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["total_entries"] == expected  # include_past => T0,T1 / include_future => T1,T2
+
+    def test_with_dag_run_id_and_both_past_and_future_means_full_range(self, test_client, session):
+        dag_id = "example_python_operator"
+        task_instances = [
+            {"logical_date": DEFAULT_DATETIME_1 - dt.timedelta(days=1), "state": State.FAILED},  # T0
+            {"logical_date": DEFAULT_DATETIME_1, "state": State.FAILED},  # T1
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1), "state": State.FAILED},  # T2
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2), "state": State.FAILED},  # T3
+            {"logical_date": None, "state": State.FAILED},  # T4
+        ]
+        self.create_task_instances(session, dag_id=dag_id, task_instances=task_instances, update_extras=False)
+        payload = {
+            "dry_run": True,
+            "only_failed": False,
+            "dag_run_id": "TEST_DAG_RUN_ID_1",  # T1
+            "include_past": True,
+            "include_future": True,
+        }
+        resp = test_client.post(f"/dags/{dag_id}/clearTaskInstances", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["total_entries"] == 5  # T0 ~ #T4
+
+    def test_with_dag_run_id_only_uses_run_id_based_clearing(self, test_client, session):
+        dag_id = "example_python_operator"
+        task_instances = [
+            {"logical_date": DEFAULT_DATETIME_1, "state": State.SUCCESS},  # T0
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=1), "state": State.FAILED},  # T1
+            {"logical_date": DEFAULT_DATETIME_1 + dt.timedelta(days=2), "state": State.SUCCESS},  # T2
+        ]
+        self.create_task_instances(session, dag_id=dag_id, task_instances=task_instances, update_extras=False)
+        payload = {
+            "dry_run": True,
+            "only_failed": True,
+            "dag_run_id": "TEST_DAG_RUN_ID_1",
+        }
+        resp = test_client.post(f"/dags/{dag_id}/clearTaskInstances", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["total_entries"] == 1
+        assert resp.json()["task_instances"][0]["logical_date"] == "2020-01-02T00:00:00Z"  # T1
 
     def test_should_respond_401(self, unauthenticated_test_client):
         response = unauthenticated_test_client.post(
@@ -2248,7 +2604,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             task_instances=task_instances,
             update_extras=False,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{request_dag}/clearTaskInstances",
             json=payload,
@@ -2261,7 +2616,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
         self.create_task_instances(session)
         dag_id = "example_python_operator"
         payload = {"reset_dag_runs": True, "dry_run": False}
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2270,8 +2624,7 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
 
         # dag (3rd argument) is a different session object. Manually asserting that the dag_id
         # is the same.
-        mock_clearti.assert_called_once_with([], mock.ANY, mock.ANY, DagRunState.QUEUED)
-        assert mock_clearti.call_args[0][2].dag_id == dag_id
+        mock_clearti.assert_called_once_with([], mock.ANY, DagRunState.QUEUED, run_on_latest_version=False)
 
     def test_clear_taskinstance_is_called_with_invalid_task_ids(self, test_client, session):
         """Test that dagrun is running when invalid task_ids are passed to clearTaskInstances API."""
@@ -2281,7 +2634,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
         assert dagrun.state == "running"
 
         payload = {"dry_run": False, "reset_dag_runs": True, "task_ids": [""]}
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2331,7 +2683,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             update_extras=False,
             dag_run_state=DagRunState.FAILED,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2416,7 +2767,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             update_extras=False,
             dag_run_state=State.FAILED,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2426,7 +2776,7 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             {
                 "dag_id": "example_python_operator",
                 "dag_display_name": "example_python_operator",
-                "dag_version": None,
+                "dag_version": mock.ANY,
                 "dag_run_id": "TEST_DAG_RUN_ID_0",
                 "task_id": "print_the_context",
                 "duration": mock.ANY,
@@ -2440,6 +2790,7 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
                 "max_tries": 0,
                 "note": "placeholder-note",
                 "operator": "PythonOperator",
+                "operator_name": "PythonOperator",
                 "pid": 100,
                 "pool": "default_pool",
                 "pool_slots": 1,
@@ -2502,7 +2853,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             update_extras=False,
             dag_run_state=State.FAILED,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2586,7 +2936,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             update_extras=False,
             dag_run_state=State.FAILED,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
@@ -2736,7 +3085,6 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             task_instances=task_instances,
             update_extras=False,
         )
-        self.dagbag.sync_to_db("dags-folder", None)
         response = test_client.post(
             "/dags/example_python_operator/clearTaskInstances",
             json=payload,
@@ -2755,7 +3103,36 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
             },
         )
         assert response.status_code == 404
-        assert "DAG non-existent-dag not found" in response.text
+        assert "The Dag with ID: `non-existent-dag` was not found" in response.text
+
+    @pytest.mark.parametrize(
+        "dry_run, audit_log_count",
+        [
+            (True, 0),
+            (False, 1),
+        ],
+    )
+    def test_dry_run_audit_log(self, test_client, session, dry_run, audit_log_count):
+        dag_id = "example_python_operator"
+        dag_run_id = "TEST_DAG_RUN_ID"
+        event = "post_clear_task_instances"
+
+        payload = {"dry_run": dry_run, "dag_run_id": dag_run_id}
+        self.create_task_instances(session, dag_id)
+
+        response = test_client.post(
+            f"/dags/{dag_id}/clearTaskInstances",
+            json=payload,
+        )
+
+        logs = (
+            session.query(Log)
+            .filter(Log.dag_id == dag_id, Log.run_id == dag_run_id, Log.event == event)
+            .count()
+        )
+
+        assert response.status_code == 200
+        assert logs == audit_log_count
 
 
 class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
@@ -2782,6 +3159,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "map_index": -1,
                     "max_tries": 0,
                     "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
                     "pid": 100,
                     "pool": "default_pool",
                     "pool_slots": 1,
@@ -2796,7 +3174,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "try_number": 1,
                     "unixname": getuser(),
                     "dag_run_id": "TEST_DAG_RUN_ID",
-                    "dag_version": None,
+                    "dag_version": mock.ANY,
                 },
                 {
                     "dag_id": "example_python_operator",
@@ -2809,6 +3187,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "map_index": -1,
                     "max_tries": 1,
                     "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
                     "pid": 100,
                     "pool": "default_pool",
                     "pool_slots": 1,
@@ -2823,7 +3202,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "try_number": 2,
                     "unixname": getuser(),
                     "dag_run_id": "TEST_DAG_RUN_ID",
-                    "dag_version": None,
+                    "dag_version": mock.ANY,
                 },
             ],
             "total_entries": 2,
@@ -2869,6 +3248,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "map_index": -1,
                     "max_tries": 0,
                     "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
                     "pid": 100,
                     "pool": "default_pool",
                     "pool_slots": 1,
@@ -2883,7 +3263,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                     "try_number": 1,
                     "unixname": getuser(),
                     "dag_run_id": "TEST_DAG_RUN_ID",
-                    "dag_version": None,
+                    "dag_version": mock.ANY,
                 },
             ],
             "total_entries": 1,
@@ -2893,7 +3273,9 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
         tis = self.create_task_instances(session, task_instances=[{"state": State.FAILED}])
         old_ti = tis[0]
         for idx in (1, 2):
-            ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=idx)
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=idx, dag_version_id=old_ti.dag_version_id
+            )
             for attr in ["duration", "end_date", "pid", "start_date", "state", "queue"]:
                 setattr(ti, attr, getattr(old_ti, attr))
             ti.try_number = 1
@@ -2938,6 +3320,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                         "map_index": map_index,
                         "max_tries": 0,
                         "operator": "PythonOperator",
+                        "operator_name": "PythonOperator",
                         "pid": 100,
                         "pool": "default_pool",
                         "pool_slots": 1,
@@ -2952,7 +3335,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                         "try_number": 1,
                         "unixname": getuser(),
                         "dag_run_id": "TEST_DAG_RUN_ID",
-                        "dag_version": None,
+                        "dag_version": mock.ANY,
                     },
                     {
                         "dag_id": "example_python_operator",
@@ -2965,6 +3348,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                         "map_index": map_index,
                         "max_tries": 1,
                         "operator": "PythonOperator",
+                        "operator_name": "PythonOperator",
                         "pid": 100,
                         "pool": "default_pool",
                         "pool_slots": 1,
@@ -2979,7 +3363,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                         "try_number": 2,
                         "unixname": getuser(),
                         "dag_run_id": "TEST_DAG_RUN_ID",
-                        "dag_version": None,
+                        "dag_version": mock.ANY,
                     },
                 ],
                 "total_entries": 2,
@@ -3005,7 +3389,11 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
         ],
     )
     @pytest.mark.usefixtures("make_dag_with_multiple_versions")
-    def test_should_respond_200_with_versions(self, test_client, run_id, expected_version_number):
+    @mock.patch("airflow.api_fastapi.core_api.datamodels.dag_versions.hasattr")
+    def test_should_respond_200_with_versions(
+        self, mock_hasattr, test_client, run_id, expected_version_number
+    ):
+        mock_hasattr.return_value = False
         response = test_client.get(
             f"/dags/dag_with_multiple_versions/dagRuns/{run_id}/taskInstances/task1/tries"
         )
@@ -3031,6 +3419,7 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
             "queue": "default",
             "priority_weight": 1,
             "operator": "EmptyOperator",
+            "operator_name": "EmptyOperator",
             "queued_when": None,
             "scheduled_when": None,
             "pid": None,
@@ -3042,8 +3431,64 @@ class TestGetTaskInstanceTries(TestTaskInstanceEndpoint):
                 "dag_id": "dag_with_multiple_versions",
                 "bundle_name": "dag_maker",
                 "bundle_version": f"some_commit_hash{expected_version_number}",
-                "bundle_url": f"fakeprotocol://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
+                "bundle_url": f"http://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
                 "created_at": mock.ANY,
+                "dag_display_name": "dag_with_multiple_versions",
+            },
+        }
+
+    @pytest.mark.parametrize(
+        "run_id, expected_version_number",
+        [
+            ("run1", 1),
+            ("run2", 2),
+            ("run3", 3),
+        ],
+    )
+    @pytest.mark.usefixtures("make_dag_with_multiple_versions")
+    def test_should_respond_200_with_versions_using_url_template(
+        self, test_client, run_id, expected_version_number
+    ):
+        response = test_client.get(
+            f"/dags/dag_with_multiple_versions/dagRuns/{run_id}/taskInstances/task1/tries"
+        )
+        assert response.status_code == 200
+
+        assert response.json()["task_instances"][0] == {
+            "task_id": "task1",
+            "dag_id": "dag_with_multiple_versions",
+            "dag_display_name": "dag_with_multiple_versions",
+            "dag_run_id": run_id,
+            "map_index": -1,
+            "start_date": None,
+            "end_date": mock.ANY,
+            "duration": None,
+            "state": mock.ANY,
+            "try_number": 0,
+            "max_tries": 0,
+            "task_display_name": "task1",
+            "hostname": "",
+            "unixname": getuser(),
+            "pool": "default_pool",
+            "pool_slots": 1,
+            "queue": "default",
+            "priority_weight": 1,
+            "operator": "EmptyOperator",
+            "operator_name": "EmptyOperator",
+            "queued_when": None,
+            "scheduled_when": None,
+            "pid": None,
+            "executor": None,
+            "executor_config": "{}",
+            "dag_version": {
+                "id": mock.ANY,
+                "version_number": expected_version_number,
+                "dag_id": "dag_with_multiple_versions",
+                "bundle_name": "dag_maker",
+                "bundle_version": f"some_commit_hash{expected_version_number}",
+                "bundle_url": f"http://test_host.github.com/tree/some_commit_hash{expected_version_number}/dags",
+                "created_at": mock.ANY,
+                "dag_display_name": "dag_with_multiple_versions",
             },
         }
 
@@ -3089,7 +3534,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         assert response2.json()["state"] == state
         assert listener.state == listener_state
 
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_should_call_mocked_api(self, mock_set_ti_state, test_client, session):
         self.create_task_instances(session)
 
@@ -3100,7 +3545,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
                 TaskInstance.run_id == self.RUN_ID,
                 TaskInstance.map_index == -1,
             )
-        ).one_or_none()
+        ).all()
 
         response = test_client.patch(
             self.ENDPOINT_URL,
@@ -3110,39 +3555,45 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         )
         assert response.status_code == 200
         assert response.json() == {
-            "dag_id": self.DAG_ID,
-            "dag_display_name": self.DAG_DISPLAY_NAME,
-            "dag_version": None,
-            "dag_run_id": self.RUN_ID,
-            "logical_date": "2020-01-01T00:00:00Z",
-            "task_id": self.TASK_ID,
-            "duration": 10000.0,
-            "end_date": "2020-01-03T00:00:00Z",
-            "executor": None,
-            "executor_config": "{}",
-            "hostname": "",
-            "id": mock.ANY,
-            "map_index": -1,
-            "max_tries": 0,
-            "note": "placeholder-note",
-            "operator": "PythonOperator",
-            "pid": 100,
-            "pool": "default_pool",
-            "pool_slots": 1,
-            "priority_weight": 9,
-            "queue": "default_queue",
-            "queued_when": None,
-            "scheduled_when": None,
-            "start_date": "2020-01-02T00:00:00Z",
-            "state": "running",
-            "task_display_name": self.TASK_ID,
-            "try_number": 0,
-            "unixname": getuser(),
-            "rendered_fields": {},
-            "rendered_map_index": None,
-            "run_after": "2020-01-01T00:00:00Z",
-            "trigger": None,
-            "triggerer_job": None,
+            "task_instances": [
+                {
+                    "dag_id": self.DAG_ID,
+                    "dag_display_name": self.DAG_DISPLAY_NAME,
+                    "dag_version": mock.ANY,
+                    "dag_run_id": self.RUN_ID,
+                    "logical_date": "2020-01-01T00:00:00Z",
+                    "task_id": self.TASK_ID,
+                    "duration": 10000.0,
+                    "end_date": "2020-01-03T00:00:00Z",
+                    "executor": None,
+                    "executor_config": "{}",
+                    "hostname": "",
+                    "id": mock.ANY,
+                    "map_index": -1,
+                    "max_tries": 0,
+                    "note": "placeholder-note",
+                    "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
+                    "pid": 100,
+                    "pool": "default_pool",
+                    "pool_slots": 1,
+                    "priority_weight": 9,
+                    "queue": "default_queue",
+                    "queued_when": None,
+                    "scheduled_when": None,
+                    "start_date": "2020-01-02T00:00:00Z",
+                    "state": "running",
+                    "task_display_name": self.TASK_ID,
+                    "try_number": 0,
+                    "unixname": getuser(),
+                    "rendered_fields": {},
+                    "rendered_map_index": None,
+                    "run_after": "2020-01-01T00:00:00Z",
+                    "trigger": None,
+                    "triggerer_job": None,
+                }
+            ],
+            "total_entries": 1,
         }
 
         mock_set_ti_state.assert_called_once_with(
@@ -3150,7 +3601,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
             downstream=False,
             upstream=False,
             future=False,
-            map_indexes=[-1],
+            map_indexes=None,
             past=False,
             run_id=self.RUN_ID,
             session=mock.ANY,
@@ -3176,7 +3627,9 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
     def test_should_update_mapped_task_instance_state(self, test_client, session):
         map_index = 1
         tis = self.create_task_instances(session)
-        ti = TaskInstance(task=tis[0].task, run_id=tis[0].run_id, map_index=map_index)
+        ti = TaskInstance(
+            task=tis[0].task, run_id=tis[0].run_id, map_index=map_index, dag_version_id=tis[0].dag_version_id
+        )
         ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
         session.add(ti)
         session.commit()
@@ -3192,6 +3645,34 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         response2 = test_client.get(f"{self.ENDPOINT_URL}/{map_index}")
         assert response2.status_code == 200
         assert response2.json()["state"] == self.NEW_STATE
+
+    def test_should_update_mapped_task_instance_summary_state(self, test_client, session):
+        tis = self.create_task_instances(session)
+
+        for map_index in [1, 2, 3]:
+            ti = TaskInstance(
+                task=tis[0].task,
+                run_id=tis[0].run_id,
+                map_index=map_index,
+                dag_version_id=tis[0].dag_version_id,
+            )
+            ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
+            session.add(ti)
+        tis[0].map_index = 0
+        session.commit()
+
+        response = test_client.patch(
+            f"{self.ENDPOINT_URL}",
+            json={
+                "new_state": self.NEW_STATE,
+            },
+        )
+        assert response.status_code == 200
+
+        response_data = response.json()
+        assert response_data["total_entries"] == 4
+        for map_index in range(4):
+            assert response_data["task_instances"][map_index]["state"] == self.NEW_STATE
 
     def test_should_respond_401(self, unauthenticated_test_client):
         response = unauthenticated_test_client.patch(
@@ -3215,10 +3696,9 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         "error, code, payload",
         [
             [
-                (
-                    "Task Instance not found for dag_id=example_python_operator"
-                    ", run_id=TEST_DAG_RUN_ID, task_id=print_the_context"
-                ),
+                [
+                    "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `print_the_context` and map_index: `None` was not found",
+                ],
                 404,
                 {
                     "new_state": "failed",
@@ -3252,7 +3732,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
             },
         )
         assert response.status_code == 404
-        assert response.json() == {"detail": "DAG non-existent-dag not found"}
+        assert response.json() == {"detail": "The Dag with ID: `non-existent-dag` was not found"}
 
     def test_should_raise_404_for_non_existent_task_in_dag(self, test_client):
         response = test_client.patch(
@@ -3327,39 +3807,45 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
                 "failed",
                 200,
                 {
-                    "dag_id": "example_python_operator",
-                    "dag_display_name": "example_python_operator",
-                    "dag_version": None,
-                    "dag_run_id": "TEST_DAG_RUN_ID",
-                    "logical_date": "2020-01-01T00:00:00Z",
-                    "task_id": "print_the_context",
-                    "duration": 10000.0,
-                    "end_date": "2020-01-03T00:00:00Z",
-                    "executor": None,
-                    "executor_config": "{}",
-                    "hostname": "",
-                    "id": mock.ANY,
-                    "map_index": -1,
-                    "max_tries": 0,
-                    "note": "placeholder-note",
-                    "operator": "PythonOperator",
-                    "pid": 100,
-                    "pool": "default_pool",
-                    "pool_slots": 1,
-                    "priority_weight": 9,
-                    "queue": "default_queue",
-                    "queued_when": None,
-                    "scheduled_when": None,
-                    "start_date": "2020-01-02T00:00:00Z",
-                    "state": "running",
-                    "task_display_name": "print_the_context",
-                    "try_number": 0,
-                    "unixname": getuser(),
-                    "rendered_fields": {},
-                    "rendered_map_index": None,
-                    "run_after": "2020-01-01T00:00:00Z",
-                    "trigger": None,
-                    "triggerer_job": None,
+                    "task_instances": [
+                        {
+                            "dag_id": "example_python_operator",
+                            "dag_display_name": "example_python_operator",
+                            "dag_version": mock.ANY,
+                            "dag_run_id": "TEST_DAG_RUN_ID",
+                            "logical_date": "2020-01-01T00:00:00Z",
+                            "task_id": "print_the_context",
+                            "duration": 10000.0,
+                            "end_date": "2020-01-03T00:00:00Z",
+                            "executor": None,
+                            "executor_config": "{}",
+                            "hostname": "",
+                            "id": mock.ANY,
+                            "map_index": -1,
+                            "max_tries": 0,
+                            "note": "placeholder-note",
+                            "operator": "PythonOperator",
+                            "operator_name": "PythonOperator",
+                            "pid": 100,
+                            "pool": "default_pool",
+                            "pool_slots": 1,
+                            "priority_weight": 9,
+                            "queue": "default_queue",
+                            "queued_when": None,
+                            "scheduled_when": None,
+                            "start_date": "2020-01-02T00:00:00Z",
+                            "state": "running",
+                            "task_display_name": "print_the_context",
+                            "try_number": 0,
+                            "unixname": getuser(),
+                            "rendered_fields": {},
+                            "rendered_map_index": None,
+                            "run_after": "2020-01-01T00:00:00Z",
+                            "trigger": None,
+                            "triggerer_job": None,
+                        }
+                    ],
+                    "total_entries": 1,
                 },
                 1,
             ),
@@ -3381,7 +3867,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
             ),
         ],
     )
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_update_mask_should_call_mocked_api(
         self,
         mock_set_ti_state,
@@ -3401,7 +3887,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
                 TaskInstance.run_id == self.RUN_ID,
                 TaskInstance.map_index == -1,
             )
-        ).one_or_none()
+        ).all()
 
         response = test_client.patch(
             self.ENDPOINT_URL,
@@ -3439,41 +3925,47 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         assert response.status_code == 200, response.text
         response_data = response.json()
         assert response_data == {
-            "dag_id": self.DAG_ID,
-            "dag_display_name": self.DAG_DISPLAY_NAME,
-            "dag_version": None,
-            "duration": 10000.0,
-            "end_date": "2020-01-03T00:00:00Z",
-            "logical_date": "2020-01-01T00:00:00Z",
-            "id": mock.ANY,
-            "executor": None,
-            "executor_config": "{}",
-            "hostname": "",
-            "map_index": -1,
-            "max_tries": 0,
-            "note": new_note_value,
-            "operator": "PythonOperator",
-            "pid": 100,
-            "pool": "default_pool",
-            "pool_slots": 1,
-            "priority_weight": 9,
-            "queue": "default_queue",
-            "queued_when": None,
-            "scheduled_when": None,
-            "start_date": "2020-01-02T00:00:00Z",
-            "state": "running",
-            "task_id": self.TASK_ID,
-            "task_display_name": self.TASK_ID,
-            "try_number": 0,
-            "unixname": getuser(),
-            "dag_run_id": self.RUN_ID,
-            "rendered_fields": {},
-            "rendered_map_index": None,
-            "run_after": "2020-01-01T00:00:00Z",
-            "trigger": None,
-            "triggerer_job": None,
+            "task_instances": [
+                {
+                    "dag_id": self.DAG_ID,
+                    "dag_display_name": self.DAG_DISPLAY_NAME,
+                    "dag_version": mock.ANY,
+                    "duration": 10000.0,
+                    "end_date": "2020-01-03T00:00:00Z",
+                    "logical_date": "2020-01-01T00:00:00Z",
+                    "id": mock.ANY,
+                    "executor": None,
+                    "executor_config": "{}",
+                    "hostname": "",
+                    "map_index": -1,
+                    "max_tries": 0,
+                    "note": new_note_value,
+                    "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
+                    "pid": 100,
+                    "pool": "default_pool",
+                    "pool_slots": 1,
+                    "priority_weight": 9,
+                    "queue": "default_queue",
+                    "queued_when": None,
+                    "scheduled_when": None,
+                    "start_date": "2020-01-02T00:00:00Z",
+                    "state": "running",
+                    "task_id": self.TASK_ID,
+                    "task_display_name": self.TASK_ID,
+                    "try_number": 0,
+                    "unixname": getuser(),
+                    "dag_run_id": self.RUN_ID,
+                    "rendered_fields": {},
+                    "rendered_map_index": None,
+                    "run_after": "2020-01-01T00:00:00Z",
+                    "trigger": None,
+                    "triggerer_job": None,
+                }
+            ],
+            "total_entries": 1,
         }
-        _check_task_instance_note(session, response_data["id"], ti_note_data)
+        _check_task_instance_note(session, response_data["task_instances"][0]["id"], ti_note_data)
 
     def test_set_note_should_respond_200(self, test_client, session):
         self.create_task_instances(session)
@@ -3485,51 +3977,59 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         assert response.status_code == 200, response.text
         response_data = response.json()
         assert response_data == {
-            "dag_id": self.DAG_ID,
-            "dag_display_name": self.DAG_DISPLAY_NAME,
-            "dag_version": None,
-            "duration": 10000.0,
-            "end_date": "2020-01-03T00:00:00Z",
-            "logical_date": "2020-01-01T00:00:00Z",
-            "id": mock.ANY,
-            "executor": None,
-            "executor_config": "{}",
-            "hostname": "",
-            "map_index": -1,
-            "max_tries": 0,
-            "note": new_note_value,
-            "operator": "PythonOperator",
-            "pid": 100,
-            "pool": "default_pool",
-            "pool_slots": 1,
-            "priority_weight": 9,
-            "queue": "default_queue",
-            "queued_when": None,
-            "scheduled_when": None,
-            "start_date": "2020-01-02T00:00:00Z",
-            "state": "running",
-            "task_id": self.TASK_ID,
-            "task_display_name": self.TASK_ID,
-            "try_number": 0,
-            "unixname": getuser(),
-            "dag_run_id": self.RUN_ID,
-            "rendered_fields": {},
-            "rendered_map_index": None,
-            "run_after": "2020-01-01T00:00:00Z",
-            "trigger": None,
-            "triggerer_job": None,
+            "task_instances": [
+                {
+                    "dag_id": self.DAG_ID,
+                    "dag_display_name": self.DAG_DISPLAY_NAME,
+                    "dag_version": mock.ANY,
+                    "duration": 10000.0,
+                    "end_date": "2020-01-03T00:00:00Z",
+                    "logical_date": "2020-01-01T00:00:00Z",
+                    "id": mock.ANY,
+                    "executor": None,
+                    "executor_config": "{}",
+                    "hostname": "",
+                    "map_index": -1,
+                    "max_tries": 0,
+                    "note": new_note_value,
+                    "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
+                    "pid": 100,
+                    "pool": "default_pool",
+                    "pool_slots": 1,
+                    "priority_weight": 9,
+                    "queue": "default_queue",
+                    "queued_when": None,
+                    "scheduled_when": None,
+                    "start_date": "2020-01-02T00:00:00Z",
+                    "state": "running",
+                    "task_id": self.TASK_ID,
+                    "task_display_name": self.TASK_ID,
+                    "try_number": 0,
+                    "unixname": getuser(),
+                    "dag_run_id": self.RUN_ID,
+                    "rendered_fields": {},
+                    "rendered_map_index": None,
+                    "run_after": "2020-01-01T00:00:00Z",
+                    "trigger": None,
+                    "triggerer_job": None,
+                }
+            ],
+            "total_entries": 1,
         }
 
         _check_task_instance_note(
-            session, response_data["id"], {"content": new_note_value, "user_id": "test"}
+            session, response_data["task_instances"][0]["id"], {"content": new_note_value, "user_id": "test"}
         )
 
-    def test_set_note_should_respond_200_mapped_task_instance_with_rtif(self, test_client, session):
+    def test_set_note_should_respond_200_mapped_task_with_rtif(self, test_client, session):
         """Verify we don't duplicate rows through join to RTIF"""
         tis = self.create_task_instances(session)
         old_ti = tis[0]
         for idx in (1, 2):
-            ti = TaskInstance(task=old_ti.task, run_id=old_ti.run_id, map_index=idx)
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=idx, dag_version_id=old_ti.dag_version_id
+            )
             ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
             for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
                 setattr(ti, attr, getattr(old_ti, attr))
@@ -3548,9 +4048,83 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
             response_data = response.json()
 
             assert response_data == {
+                "task_instances": [
+                    {
+                        "dag_id": self.DAG_ID,
+                        "dag_display_name": self.DAG_DISPLAY_NAME,
+                        "dag_version": mock.ANY,
+                        "duration": 10000.0,
+                        "end_date": "2020-01-03T00:00:00Z",
+                        "logical_date": "2020-01-01T00:00:00Z",
+                        "id": mock.ANY,
+                        "executor": None,
+                        "executor_config": "{}",
+                        "hostname": "",
+                        "map_index": map_index,
+                        "max_tries": 0,
+                        "note": new_note_value,
+                        "operator": "PythonOperator",
+                        "operator_name": "PythonOperator",
+                        "pid": 100,
+                        "pool": "default_pool",
+                        "pool_slots": 1,
+                        "priority_weight": 9,
+                        "queue": "default_queue",
+                        "queued_when": None,
+                        "scheduled_when": None,
+                        "start_date": "2020-01-02T00:00:00Z",
+                        "state": "running",
+                        "task_id": self.TASK_ID,
+                        "task_display_name": self.TASK_ID,
+                        "try_number": 0,
+                        "unixname": getuser(),
+                        "dag_run_id": self.RUN_ID,
+                        "rendered_fields": {"op_args": [], "op_kwargs": {}, "templates_dict": None},
+                        "rendered_map_index": str(map_index),
+                        "run_after": "2020-01-01T00:00:00Z",
+                        "trigger": None,
+                        "triggerer_job": None,
+                    }
+                ],
+                "total_entries": 1,
+            }
+
+            _check_task_instance_note(
+                session,
+                response_data["task_instances"][0]["id"],
+                {"content": new_note_value, "user_id": "test"},
+            )
+
+    def test_set_note_should_respond_200_mapped_task_summary_with_rtif(self, test_client, session):
+        """Verify we don't duplicate rows through join to RTIF"""
+        tis = self.create_task_instances(session)
+        old_ti = tis[0]
+        for idx in (1, 2):
+            ti = TaskInstance(
+                task=old_ti.task, run_id=old_ti.run_id, map_index=idx, dag_version_id=old_ti.dag_version_id
+            )
+            ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
+            for attr in ["duration", "end_date", "pid", "start_date", "state", "queue", "note"]:
+                setattr(ti, attr, getattr(old_ti, attr))
+            session.add(ti)
+        session.commit()
+
+        new_note_value = "My super cool TaskInstance note"
+        response = test_client.patch(
+            "/dags/example_python_operator/dagRuns/TEST_DAG_RUN_ID/taskInstances/print_the_context",
+            json={"note": new_note_value},
+        )
+        assert response.status_code == 200, response.text
+        response_data = response.json()
+
+        assert response_data["total_entries"] == 3
+
+        for map_index in range(1, 3):
+            response_ti = response_data["task_instances"][map_index]
+            assert response_ti == {
                 "dag_id": self.DAG_ID,
                 "dag_display_name": self.DAG_DISPLAY_NAME,
-                "dag_version": None,
+                "dag_version": mock.ANY,
                 "duration": 10000.0,
                 "end_date": "2020-01-03T00:00:00Z",
                 "logical_date": "2020-01-01T00:00:00Z",
@@ -3562,6 +4136,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
                 "max_tries": 0,
                 "note": new_note_value,
                 "operator": "PythonOperator",
+                "operator_name": "PythonOperator",
                 "pid": 100,
                 "pool": "default_pool",
                 "pool_slots": 1,
@@ -3584,7 +4159,7 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
             }
 
             _check_task_instance_note(
-                session, response_data["id"], {"content": new_note_value, "user_id": "test"}
+                session, response_ti["id"], {"content": new_note_value, "user_id": "test"}
             )
 
     def test_set_note_should_respond_200_when_note_is_empty(self, test_client, session):
@@ -3600,12 +4175,11 @@ class TestPatchTaskInstance(TestTaskInstanceEndpoint):
         )
         assert response.status_code == 200, response.text
         response_data = response.json()
-        assert response_data["note"] == new_note_value
-        _check_task_instance_note(
-            session, response_data["id"], {"content": new_note_value, "user_id": "test"}
-        )
+        response_ti = response_data["task_instances"][0]
+        assert response_ti["note"] == new_note_value
+        _check_task_instance_note(session, response_ti["id"], {"content": new_note_value, "user_id": "test"})
 
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_should_raise_409_for_updating_same_task_instance_state(
         self, mock_set_ti_state, test_client, session
     ):
@@ -3631,20 +4205,18 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
     RUN_ID = "TEST_DAG_RUN_ID"
     DAG_DISPLAY_NAME = "example_python_operator"
 
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_should_call_mocked_api(self, mock_set_ti_state, test_client, session):
         self.create_task_instances(session)
 
-        mock_set_ti_state.return_value = [
-            session.scalars(
-                select(TaskInstance).where(
-                    TaskInstance.dag_id == self.DAG_ID,
-                    TaskInstance.task_id == self.TASK_ID,
-                    TaskInstance.run_id == self.RUN_ID,
-                    TaskInstance.map_index == -1,
-                )
-            ).one_or_none()
-        ]
+        mock_set_ti_state.return_value = session.scalars(
+            select(TaskInstance).where(
+                TaskInstance.dag_id == self.DAG_ID,
+                TaskInstance.task_id == self.TASK_ID,
+                TaskInstance.run_id == self.RUN_ID,
+                TaskInstance.map_index == -1,
+            )
+        ).all()
 
         response = test_client.patch(
             f"{self.ENDPOINT_URL}/dry_run",
@@ -3658,7 +4230,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
                 {
                     "dag_id": self.DAG_ID,
                     "dag_display_name": self.DAG_DISPLAY_NAME,
-                    "dag_version": None,
+                    "dag_version": mock.ANY,
                     "dag_run_id": self.RUN_ID,
                     "logical_date": "2020-01-01T00:00:00Z",
                     "task_id": self.TASK_ID,
@@ -3672,6 +4244,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
                     "max_tries": 0,
                     "note": "placeholder-note",
                     "operator": "PythonOperator",
+                    "operator_name": "PythonOperator",
                     "pid": 100,
                     "pool": "default_pool",
                     "pool_slots": 1,
@@ -3699,7 +4272,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
             downstream=False,
             upstream=False,
             future=False,
-            map_indexes=[-1],
+            map_indexes=None,
             past=False,
             run_id=self.RUN_ID,
             session=mock.ANY,
@@ -3758,7 +4331,9 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
     def test_should_not_update_mapped_task_instance(self, test_client, session):
         map_index = 1
         tis = self.create_task_instances(session)
-        ti = TaskInstance(task=tis[0].task, run_id=tis[0].run_id, map_index=map_index)
+        ti = TaskInstance(
+            task=tis[0].task, run_id=tis[0].run_id, map_index=map_index, dag_version_id=tis[0].dag_version_id
+        )
         ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
         session.add(ti)
         session.commit()
@@ -3780,14 +4355,46 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
         assert task_before == task_after
         _check_task_instance_note(session, task_after["id"], None)
 
+    def test_should_not_update_mapped_task_instance_summary(self, test_client, session):
+        map_indexes = [1, 2, 3]
+        tis = self.create_task_instances(session)
+        for map_index in map_indexes:
+            ti = TaskInstance(
+                task=tis[0].task,
+                run_id=tis[0].run_id,
+                map_index=map_index,
+                state="running",
+                dag_version_id=tis[0].dag_version_id,
+            )
+            ti.rendered_task_instance_fields = RTIF(ti, render_templates=False)
+            session.add(ti)
+
+        session.delete(tis[0])
+        session.commit()
+
+        response = test_client.patch(
+            f"{self.ENDPOINT_URL}/dry_run",
+            json={
+                "new_state": self.NEW_STATE,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["total_entries"] == len(map_indexes)
+
+        for map_index in map_indexes:
+            task_after = test_client.get(f"{self.ENDPOINT_URL}/{map_index}").json()
+            assert task_after["note"] is None
+            assert task_after["state"] == "running"
+            _check_task_instance_note(session, task_after["id"], None)
+
     @pytest.mark.parametrize(
         "error, code, payload",
         [
             [
-                (
-                    "Task Instance not found for dag_id=example_python_operator"
-                    ", run_id=TEST_DAG_RUN_ID, task_id=print_the_context"
-                ),
+                [
+                    "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `print_the_context` and map_index: `-1` was not found"
+                ],
                 404,
                 {
                     "new_state": "failed",
@@ -3797,7 +4404,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
     )
     def test_should_handle_errors(self, error, code, payload, test_client, session):
         response = test_client.patch(
-            f"{self.ENDPOINT_URL}/dry_run",
+            f"{self.ENDPOINT_URL}/dry_run?map_index=-1",
             json=payload,
         )
         assert response.status_code == code
@@ -3821,7 +4428,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
             },
         )
         assert response.status_code == 404
-        assert response.json() == {"detail": "DAG non-existent-dag not found"}
+        assert response.json() == {"detail": "The Dag with ID: `non-existent-dag` was not found"}
 
     def test_should_raise_404_for_non_existent_task_in_dag(self, test_client):
         response = test_client.patch(
@@ -3900,7 +4507,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
                         {
                             "dag_id": "example_python_operator",
                             "dag_display_name": "example_python_operator",
-                            "dag_version": None,
+                            "dag_version": mock.ANY,
                             "dag_run_id": "TEST_DAG_RUN_ID",
                             "logical_date": "2020-01-01T00:00:00Z",
                             "task_id": "print_the_context",
@@ -3914,6 +4521,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
                             "max_tries": 0,
                             "note": "placeholder-note",
                             "operator": "PythonOperator",
+                            "operator_name": "PythonOperator",
                             "pid": 100,
                             "pool": "default_pool",
                             "pool_slots": 1,
@@ -3955,7 +4563,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
             ),
         ],
     )
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_update_mask_should_call_mocked_api(
         self,
         mock_set_ti_state,
@@ -3968,16 +4576,14 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
     ):
         self.create_task_instances(session)
 
-        mock_set_ti_state.return_value = [
-            session.scalars(
-                select(TaskInstance).where(
-                    TaskInstance.dag_id == self.DAG_ID,
-                    TaskInstance.task_id == self.TASK_ID,
-                    TaskInstance.run_id == self.RUN_ID,
-                    TaskInstance.map_index == -1,
-                )
-            ).one_or_none()
-        ]
+        mock_set_ti_state.return_value = session.scalars(
+            select(TaskInstance).where(
+                TaskInstance.dag_id == self.DAG_ID,
+                TaskInstance.task_id == self.TASK_ID,
+                TaskInstance.run_id == self.RUN_ID,
+                TaskInstance.map_index == -1,
+            )
+        ).all()
 
         response = test_client.patch(
             f"{self.ENDPOINT_URL}/dry_run",
@@ -3990,7 +4596,7 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
         assert response.json() == expected_json
         assert mock_set_ti_state.call_count == set_ti_state_call_count
 
-    @mock.patch("airflow.models.dag.DAG.set_task_instance_state")
+    @mock.patch("airflow.serialization.serialized_objects.SerializedDAG.set_task_instance_state")
     def test_should_return_empty_list_for_updating_same_task_instance_state(
         self, mock_set_ti_state, test_client, session
     ):
@@ -4006,3 +4612,617 @@ class TestPatchTaskInstanceDryRun(TestTaskInstanceEndpoint):
         )
         assert response.status_code == 200
         assert response.json() == {"task_instances": [], "total_entries": 0}
+
+
+class TestDeleteTaskInstance(TestTaskInstanceEndpoint):
+    DAG_ID = "example_python_operator"
+    TASK_ID = "print_the_context"
+    RUN_ID = "TEST_DAG_RUN_ID"
+    ENDPOINT_URL = f"/dags/{DAG_ID}/dagRuns/{RUN_ID}/taskInstances/{TASK_ID}"
+
+    def test_should_respond_401(self, unauthenticated_test_client):
+        response = unauthenticated_test_client.delete(self.ENDPOINT_URL)
+        assert response.status_code == 401
+
+    def test_should_respond_403(self, unauthorized_test_client):
+        response = unauthorized_test_client.delete(self.ENDPOINT_URL)
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize(
+        "test_url, setup_needed, expected_error",
+        [
+            (
+                f"/dags/non_existent_dag/dagRuns/{RUN_ID}/taskInstances/{TASK_ID}",
+                False,
+                "The Task Instance with dag_id: `non_existent_dag`, run_id: `TEST_DAG_RUN_ID`, task_id: `print_the_context` and map_index: `-1` was not found",
+            ),
+            (
+                f"/dags/{DAG_ID}/dagRuns/{RUN_ID}/taskInstances/non_existent_task",
+                True,
+                "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `non_existent_task` and map_index: `-1` was not found",
+            ),
+            (
+                f"/dags/{DAG_ID}/dagRuns/NON_EXISTENT_DAG_RUN/taskInstances/{TASK_ID}",
+                True,
+                "The Task Instance with dag_id: `example_python_operator`, run_id: `NON_EXISTENT_DAG_RUN`, task_id: `print_the_context` and map_index: `-1` was not found",
+            ),
+        ],
+    )
+    def test_should_respond_404_for_non_existent_resources(
+        self, test_client, session, test_url, setup_needed, expected_error
+    ):
+        if setup_needed:
+            self.create_task_instances(session)
+        response = test_client.delete(test_url)
+        assert response.status_code == 404
+        assert response.json()["detail"] == expected_error
+
+    @pytest.mark.parametrize(
+        "task_instances, map_index, expected_status_code, expected_remaining",
+        [
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                -1,
+                200,
+                None,
+                id="normal-success-state",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                -1,
+                200,
+                None,
+                id="normal-running-state",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.FAILED}],
+                -1,
+                200,
+                None,
+                id="normal-failed-state",
+            ),
+            pytest.param(
+                [
+                    {"task_id": TASK_ID, "map_index": 1},
+                    {"task_id": TASK_ID, "map_index": 2},
+                    {"task_id": TASK_ID, "map_index": 3},
+                ],
+                2,
+                200,
+                {1, 3},
+                id="mapped-task-deletion",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID}],
+                1,
+                404,
+                set(),
+                id="non-mapped-task-with-map-index",
+            ),
+        ],
+    )
+    def test_should_handle_task_instance_deletion(
+        self,
+        test_client,
+        session,
+        task_instances,
+        map_index,
+        expected_status_code,
+        expected_remaining,
+    ):
+        self.create_task_instances(session, task_instances=task_instances)
+
+        base_query = session.query(TaskInstance).filter(
+            TaskInstance.dag_id == self.DAG_ID,
+            TaskInstance.task_id == self.TASK_ID,
+            TaskInstance.run_id == self.RUN_ID,
+        )
+
+        if map_index == -1:
+            initial_ti = base_query.filter(TaskInstance.map_index == -1).first()
+            assert initial_ti is not None
+        else:
+            initial_tis = base_query.filter(TaskInstance.map_index != -1).all()
+            if any(isinstance(ti, dict) and "map_index" in ti for ti in task_instances):
+                expected_map_indexes = {ti["map_index"] for ti in task_instances if "map_index" in ti}
+                actual_map_indexes = {ti.map_index for ti in initial_tis}
+                assert actual_map_indexes == expected_map_indexes
+            else:
+                assert len(initial_tis) == 0
+
+        response = test_client.delete(
+            self.ENDPOINT_URL,
+            params={"map_index": map_index} if map_index != -1 else None,
+        )
+        assert response.status_code == expected_status_code
+
+        if expected_status_code == 404:
+            assert (
+                response.json()["detail"]
+                == f"The Task Instance with dag_id: `{self.DAG_ID}`, run_id: `{self.RUN_ID}`, task_id: `{self.TASK_ID}` and map_index: `{map_index}` was not found"
+            )
+        else:
+            if map_index == -1:
+                deleted_ti = base_query.filter(TaskInstance.map_index == -1).first()
+                assert deleted_ti is None
+            else:
+                remaining_tis = base_query.filter(TaskInstance.map_index != -1).all()
+                if expected_remaining is not None:
+                    assert set(ti.map_index for ti in remaining_tis) == expected_remaining
+
+
+class TestBulkTaskInstances(TestTaskInstanceEndpoint):
+    DAG_ID = "example_python_operator"
+    TASK_ID = "print_the_context"
+    RUN_ID = "TEST_DAG_RUN_ID"
+    ENDPOINT_URL = f"/dags/{DAG_ID}/dagRuns/{RUN_ID}/taskInstances"
+
+    @pytest.mark.parametrize(
+        "default_ti, actions, expected_results",
+        [
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                TASK_ID,
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [TASK_ID],
+                        "errors": [],
+                    }
+                },
+                id="delete-success",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "map_index": -1,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [f"{TASK_ID}[-1]"],
+                        "errors": [],
+                    }
+                },
+                id="delete-with-entity-success",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                "non_existent_task",
+                            ],
+                            "action_on_non_existence": "skip",
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [],
+                        "errors": [],
+                    }
+                },
+                id="delete-skip",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                {
+                                    "task_id": "non_existent_task",
+                                    "map_index": -1,
+                                },
+                            ],
+                            "action_on_non_existence": "skip",
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [],
+                        "errors": [],
+                    }
+                },
+                id="delete-with-entity-skip",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                "non_existent_task",
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "No task instances found for task_id: non_existent_task",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+                id="delete-failure",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                {
+                                    "task_id": "non_existent_task",
+                                    "map_index": -1,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The task instances with these task_ids: ['non_existent_task[-1]'] were not found",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+                id="delete-with-entity-failure",
+            ),
+            pytest.param(
+                [
+                    {"task_id": TASK_ID, "state": State.SUCCESS, "map_index": 0},
+                    {"task_id": TASK_ID, "state": State.SUCCESS, "map_index": 1},
+                    {"task_id": TASK_ID, "state": State.SUCCESS, "map_index": 2},
+                ],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [
+                                {"task_id": TASK_ID, "map_index": None},
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": [TASK_ID],
+                        "errors": [],
+                    }
+                },
+                id="delete-all-map-indexes",
+            ),
+            pytest.param(
+                [
+                    {"task_id": TASK_ID, "state": State.SUCCESS},
+                    {"task_id": "another_task", "state": State.SUCCESS},
+                ],
+                {
+                    "actions": [
+                        {
+                            "action": "delete",
+                            "entities": [TASK_ID, {"task_id": "another_task", "map_index": -1}],
+                        }
+                    ]
+                },
+                {
+                    "delete": {
+                        "success": ["another_task[-1]", TASK_ID],
+                        "errors": [],
+                    }
+                },
+                id="mixed-string-and-object",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [TASK_ID],
+                        "errors": [],
+                    }
+                },
+                id="update-success",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": "non_existent_task",
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                },
+                            ],
+                            "action_on_non_existence": "skip",
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [],
+                        "errors": [],
+                    }
+                },
+                id="update-skip",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING, "map_index": 100}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                    "map_index": 100,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [TASK_ID],
+                        "errors": [],
+                    }
+                },
+                id="update-success-mapped-task",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": "non_existent_task",
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `non_existent_task` and map_index: `None` was not found",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+                id="update-failure",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                    "map_index": -100,
+                                },
+                            ],
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [],
+                        "errors": [
+                            {
+                                "error": "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `print_the_context` and map_index: `-100` was not found",
+                                "status_code": 404,
+                            }
+                        ],
+                    }
+                },
+                id="update-failure-mapped-task",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.RUNNING}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                    "map_index": -100,
+                                },
+                            ],
+                            "action_on_non_existence": "skip",
+                        }
+                    ]
+                },
+                {
+                    "update": {
+                        "success": [],
+                        "errors": [],
+                    }
+                },
+                id="update-failure-mapped-task-with-skip",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": "non_existent_task",
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                },
+                            ],
+                        },
+                        {
+                            "action": "update",
+                            "entities": [
+                                {
+                                    "task_id": TASK_ID,
+                                    "new_state": "failed",
+                                    "note": "test",
+                                    "include_upstream": True,
+                                    "include_downstream": True,
+                                    "include_future": True,
+                                    "include_past": True,
+                                },
+                            ],
+                        },
+                        {"action": "delete", "entities": [TASK_ID]},
+                        {"action": "delete", "entities": ["non_existent_task"]},
+                    ],
+                },
+                {
+                    "update": {
+                        "success": [TASK_ID],
+                        "errors": [
+                            {
+                                "error": "The Task Instance with dag_id: `example_python_operator`, run_id: `TEST_DAG_RUN_ID`, task_id: `non_existent_task` and map_index: `None` was not found",
+                                "status_code": 404,
+                            }
+                        ],
+                    },
+                    "delete": {
+                        "success": [TASK_ID],
+                        "errors": [
+                            {
+                                "error": "No task instances found for task_id: non_existent_task",
+                                "status_code": 404,
+                            }
+                        ],
+                    },
+                },
+                id="update-delete-success",
+            ),
+            pytest.param(
+                [{"task_id": TASK_ID, "state": State.SUCCESS}],
+                {
+                    "actions": [{"action": "create", "entities": []}],
+                },
+                {
+                    "create": {
+                        "success": [],
+                        "errors": [
+                            {"error": "Task instances bulk create is not supported", "status_code": 405}
+                        ],
+                    }
+                },
+                id="create-failure",
+            ),
+        ],
+    )
+    def test_bulk_task_instances(self, test_client, session, default_ti, actions, expected_results):
+        self.create_task_instances(session, task_instances=default_ti)
+        response = test_client.patch(
+            self.ENDPOINT_URL,
+            json=actions,
+        )
+        assert response.status_code == 200
+        response_data = response.json()
+        for task_id, value in expected_results.items():
+            assert response_data[task_id] == value
+
+    def test_should_respond_401(self, unauthenticated_test_client):
+        response = unauthenticated_test_client.patch(self.ENDPOINT_URL, json={})
+        assert response.status_code == 401
+
+    def test_should_respond_403(self, unauthorized_test_client):
+        response = unauthorized_test_client.patch(self.ENDPOINT_URL, json={})
+        assert response.status_code == 403
+
+    def test_should_respond_422(self, test_client):
+        response = test_client.patch(self.ENDPOINT_URL, json={})
+        assert response.status_code == 422

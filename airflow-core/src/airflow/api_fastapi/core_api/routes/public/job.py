@@ -20,6 +20,7 @@ from typing import Annotated
 
 from fastapi import Depends, status
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from airflow.api_fastapi.common.db.common import (
     SessionDep,
@@ -40,8 +41,7 @@ from airflow.api_fastapi.core_api.datamodels.job import (
 )
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.api_fastapi.core_api.security import AccessView, requires_access_view
-from airflow.jobs.job import Job
-from airflow.utils.state import JobState
+from airflow.jobs.job import Job, JobState
 
 job_router = AirflowRouter(tags=["Job"], prefix="/jobs")
 
@@ -101,7 +101,12 @@ def get_jobs(
     is_alive: bool | None = None,
 ) -> JobCollectionResponse:
     """Get all jobs."""
-    base_select = select(Job).where(Job.state == JobState.RUNNING).order_by(Job.latest_heartbeat.desc())
+    base_select = (
+        select(Job)
+        .where(Job.state == JobState.RUNNING)
+        .order_by(Job.latest_heartbeat.desc())
+        .options(joinedload(Job.dag_model))
+    )
 
     jobs_select, total_entries = paginated_select(
         statement=base_select,

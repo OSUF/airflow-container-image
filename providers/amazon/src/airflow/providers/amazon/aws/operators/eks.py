@@ -1056,6 +1056,7 @@ class EksPodOperator(KubernetesPodOperator):
             in_cluster=self.in_cluster,
             namespace=self.namespace,
             name=self.pod_name,
+            trigger_kwargs={"eks_cluster_name": cluster_name},
             **kwargs,
         )
         # There is no need to manage the kube_config file, as it will be generated automatically.
@@ -1068,7 +1069,33 @@ class EksPodOperator(KubernetesPodOperator):
             aws_conn_id=self.aws_conn_id,
             region_name=self.region,
         )
-        with eks_hook.generate_config_file(
-            eks_cluster_name=self.cluster_name, pod_namespace=self.namespace
-        ) as self.config_file:
-            return super().execute(context)
+        session = eks_hook.get_session()
+        credentials = session.get_credentials().get_frozen_credentials()
+        with eks_hook._secure_credential_context(
+            credentials.access_key, credentials.secret_key, credentials.token
+        ) as credentials_file:
+            with eks_hook.generate_config_file(
+                eks_cluster_name=self.cluster_name,
+                pod_namespace=self.namespace,
+                credentials_file=credentials_file,
+            ) as self.config_file:
+                return super().execute(context)
+
+    def trigger_reentry(self, context: Context, event: dict[str, Any]) -> Any:
+        eks_hook = EksHook(
+            aws_conn_id=self.aws_conn_id,
+            region_name=self.region,
+        )
+        eks_cluster_name = event["eks_cluster_name"]
+        pod_namespace = event["namespace"]
+        session = eks_hook.get_session()
+        credentials = session.get_credentials().get_frozen_credentials()
+        with eks_hook._secure_credential_context(
+            credentials.access_key, credentials.secret_key, credentials.token
+        ) as credentials_file:
+            with eks_hook.generate_config_file(
+                eks_cluster_name=eks_cluster_name,
+                pod_namespace=pod_namespace,
+                credentials_file=credentials_file,
+            ) as self.config_file:
+                return super().trigger_reentry(context, event)

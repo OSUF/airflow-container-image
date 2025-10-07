@@ -29,8 +29,10 @@ from tests_common.test_utils.format_datetime import from_datetime_to_zulu, from_
 pytestmark = pytest.mark.db_test
 
 DAG_ID = "TEST_DAG_ID"
+DAG_DISPLAY_NAME = "TEST_DAG_ID"
 DAG_RUN_ID = "TEST_DAG_RUN_ID"
 TASK_ID = "TEST_TASK_ID"
+TASK_DISPLAY_NAME = "TEST_TASK_ID"
 DAG_EXECUTION_DATE = datetime(2024, 6, 15, 0, 0, tzinfo=timezone.utc)
 OWNER = "TEST_OWNER"
 OWNER_DISPLAY_NAME = "Test Owner"
@@ -128,11 +130,13 @@ class TestGetEventLog(TestEventLogsEndpoint):
                 200,
                 {
                     "dag_id": DAG_ID,
+                    "dag_display_name": DAG_DISPLAY_NAME,
                     "event": TASK_INSTANCE_EVENT,
                     "map_index": -1,
                     "owner": OWNER_AIRFLOW,
                     "run_id": DAG_RUN_ID,
                     "task_id": TASK_ID,
+                    "task_display_name": TASK_DISPLAY_NAME,
                 },
             ),
             (
@@ -140,11 +144,13 @@ class TestGetEventLog(TestEventLogsEndpoint):
                 200,
                 {
                     "dag_id": DAG_ID,
+                    "dag_display_name": DAG_DISPLAY_NAME,
                     "event": EVENT_WITH_OWNER_AND_TASK_INSTANCE,
                     "map_index": -1,
                     "owner": OWNER,
                     "run_id": DAG_RUN_ID,
                     "task_id": TASK_ID,
+                    "task_display_name": TASK_DISPLAY_NAME,
                     "try_number": 0,
                 },
             ),
@@ -162,8 +168,10 @@ class TestGetEventLog(TestEventLogsEndpoint):
         expected_json = {
             "event_log_id": event_log_id,
             "when": from_datetime_to_zulu(event_log.dttm) if event_log.dttm else None,
+            "dag_display_name": expected_body.get("dag_display_name"),
             "dag_id": expected_body.get("dag_id"),
             "task_id": expected_body.get("task_id"),
+            "task_display_name": expected_body.get("task_display_name"),
             "run_id": expected_body.get("run_id"),
             "map_index": event_log.map_index,
             "try_number": event_log.try_number,

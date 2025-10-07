@@ -26,9 +26,13 @@ import { HiddenInput } from "./HiddenInput";
 const isHidden = (fieldSchema: ParamSchema) => Boolean(fieldSchema.const);
 
 /** Generates a form row */
-export const Row = ({ name }: FlexibleFormElementProps) => {
-  const { paramsDict } = useParamStore();
+export const Row = ({ name, namespace = "default", onUpdate }: FlexibleFormElementProps) => {
+  const { paramsDict } = useParamStore(namespace);
   const param = paramsDict[name] ?? paramPlaceholder;
 
-  return isHidden(param.schema) ? <HiddenInput name={name} /> : <FieldRow name={name} />;
+  return isHidden(param.schema) ? (
+    <HiddenInput name={name} namespace={namespace} onUpdate={onUpdate} />
+  ) : (
+    <FieldRow name={name} namespace={namespace} onUpdate={onUpdate} />
+  );
 };

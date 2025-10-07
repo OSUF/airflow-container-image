@@ -28,6 +28,8 @@ PLUGINS_MANAGER_NULLABLE_ATTRIBUTES = [
     "flask_blueprints",
     "fastapi_apps",
     "fastapi_root_middlewares",
+    "external_views",
+    "react_apps",
     "menu_links",
     "flask_appbuilder_views",
     "flask_appbuilder_menu_links",
@@ -88,6 +90,12 @@ def mock_plugin_manager(plugins=None, **kwargs):
             mock.patch(
                 "airflow.plugins_manager.load_plugins_from_plugin_directory", side_effect=mock_loaded_plugins
             )
+        )
+        exit_stack.enter_context(
+            mock.patch("airflow.plugins_manager.load_providers_plugins", side_effect=mock_loaded_plugins)
+        )
+        exit_stack.enter_context(
+            mock.patch("airflow.plugins_manager.load_entrypoint_plugins", side_effect=mock_loaded_plugins)
         )
 
         if airflow_version <= "3":

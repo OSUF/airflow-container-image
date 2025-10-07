@@ -19,6 +19,7 @@
 import { Button, Input, Kbd, type ButtonProps } from "@chakra-ui/react";
 import { useState, useRef, type ChangeEvent } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useTranslation } from "react-i18next";
 import { FiSearch } from "react-icons/fi";
 import { useDebouncedCallback } from "use-debounce";
 
@@ -51,7 +52,7 @@ export const SearchBar = ({
   const searchRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(defaultValue);
   const metaKey = getMetaKey();
-
+  const { t: translate } = useTranslation(["dags"]);
   const onSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
     setValue(event.target.value);
     handleSearchChange(event.target.value);
@@ -68,13 +69,13 @@ export const SearchBar = ({
   return (
     <InputGroup
       {...groupProps}
-      colorPalette="blue"
+      colorPalette="brand"
       endElement={
         <>
           {Boolean(value) ? (
             <CloseButton
-              aria-label="Clear search"
-              colorPalette="gray"
+              aria-label={translate("search.clear")}
+              colorPalette="brand"
               data-testid="clear-search"
               onClick={() => {
                 setValue("");
@@ -84,11 +85,16 @@ export const SearchBar = ({
             />
           ) : undefined}
           {Boolean(hideAdvanced) ? undefined : (
-            <Button fontWeight="normal" height="1.75rem" variant="ghost" width={140} {...buttonProps}>
-              Advanced Search
+            <Button fontWeight="normal" height={28} variant="ghost" width={140} {...buttonProps}>
+              {translate("search.advanced")}
             </Button>
           )}
-          {!hotkeyDisabled && <Kbd size="sm">{metaKey}+K</Kbd>}
+          {!hotkeyDisabled && (
+            <Kbd size="sm">
+              {metaKey}
+              {translate("search.hotkey")}
+            </Kbd>
+          )}
         </>
       }
       startElement={<FiSearch />}

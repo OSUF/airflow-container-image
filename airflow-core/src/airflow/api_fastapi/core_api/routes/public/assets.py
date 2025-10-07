@@ -20,10 +20,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import delete, select
+from fastapi import Depends, HTTPException, status
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.orm import joinedload, subqueryload
 
+from airflow._shared.timezones import timezone
+from airflow.api_fastapi.common.dagbag import DagBagDep, get_latest_version_of_dag
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
     BaseParam,
@@ -55,6 +57,7 @@ from airflow.api_fastapi.core_api.datamodels.assets import (
 from airflow.api_fastapi.core_api.datamodels.dag_run import DAGRunResponse
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.api_fastapi.core_api.security import (
+    GetUserDep,
     ReadableDagsFilterDep,
     requires_access_asset,
     requires_access_asset_alias,
@@ -67,10 +70,9 @@ from airflow.models.asset import (
     AssetDagRunQueue,
     AssetEvent,
     AssetModel,
+    AssetWatcherModel,
     TaskOutletAssetReference,
 )
-from airflow.models.dag import DAG
-from airflow.utils import timezone
 from airflow.utils.state import DagRunState
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
@@ -135,8 +137,40 @@ def get_assets(
     session: SessionDep,
 ) -> AssetCollectionResponse:
     """Get assets."""
+    # Build a query that will be used to retrieve the ID and timestamp of the latest AssetEvent
+    last_asset_events = (
+        select(AssetEvent.asset_id, func.max(AssetEvent.timestamp).label("last_timestamp"))
+        .group_by(AssetEvent.asset_id)
+        .subquery()
+    )
+
+    # First, we're pulling the Asset ID, AssetEvent ID, and AssetEvent timestamp for the latest (last)
+    # AssetEvent. We'll eventually OUTER JOIN this to the AssetModel
+    asset_event_query = (
+        select(
+            AssetEvent.asset_id,  # The ID of the Asset, which we'll need to JOIN to the AssetModel
+            func.max(AssetEvent.id).label("last_asset_event_id"),  # The ID of the last AssetEvent
+            func.max(AssetEvent.timestamp).label("last_asset_event_timestamp"),
+        )
+        .join(
+            last_asset_events,
+            and_(
+                AssetEvent.asset_id == last_asset_events.c.asset_id,
+                AssetEvent.timestamp == last_asset_events.c.last_timestamp,
+            ),
+        )
+        .group_by(AssetEvent.asset_id)
+        .subquery()
+    )
+
+    assets_select_statement = select(
+        AssetModel,
+        asset_event_query.c.last_asset_event_id,  # This should be the AssetEvent.id
+        asset_event_query.c.last_asset_event_timestamp,
+    ).outerjoin(asset_event_query, AssetModel.id == asset_event_query.c.asset_id)
+
     assets_select, total_entries = paginated_select(
-        statement=select(AssetModel),
+        statement=assets_select_statement,
         filters=[only_active, name_pattern, uri_pattern, dag_ids],
         order_by=order_by,
         offset=offset,
@@ -144,11 +178,40 @@ def get_assets(
         session=session,
     )
 
-    assets = session.scalars(
+    assets_rows = session.execute(
         assets_select.options(
-            subqueryload(AssetModel.consuming_dags), subqueryload(AssetModel.producing_tasks)
+            subqueryload(AssetModel.scheduled_dags),
+            subqueryload(AssetModel.producing_tasks),
+            subqueryload(AssetModel.consuming_tasks),
+            subqueryload(AssetModel.watchers).joinedload(AssetWatcherModel.trigger),
         )
     )
+
+    assets = []
+
+    for asset, last_asset_event_id, last_asset_event_timestamp in assets_rows:
+        watchers_data = [
+            {
+                "name": watcher.name,
+                "trigger_id": watcher.trigger_id,
+                "created_date": watcher.trigger.created_date,
+            }
+            for watcher in asset.watchers
+        ]
+
+        asset_response = AssetResponse.model_validate(
+            {
+                **asset.__dict__,
+                "aliases": asset.aliases,
+                "watchers": watchers_data,
+                "last_asset_event": {
+                    "id": last_asset_event_id,
+                    "timestamp": last_asset_event_timestamp,
+                },
+            }
+        )
+        assets.append(asset_response)
+
     return AssetCollectionResponse(
         assets=assets,
         total_entries=total_entries,
@@ -240,13 +303,26 @@ def get_asset_events(
     source_map_index: Annotated[
         FilterParam[int | None], Depends(filter_param_factory(AssetEvent.source_map_index, int | None))
     ],
+    name_pattern: QueryAssetNamePatternSearch,
     timestamp_range: Annotated[RangeFilter, Depends(datetime_range_filter_factory("timestamp", AssetEvent))],
     session: SessionDep,
 ) -> AssetEventCollectionResponse:
     """Get asset events."""
+    base_statement = select(AssetEvent)
+    if name_pattern.value:
+        base_statement = base_statement.join(AssetModel, AssetEvent.asset_id == AssetModel.id)
+
     assets_event_select, total_entries = paginated_select(
-        statement=select(AssetEvent),
-        filters=[asset_id, source_dag_id, source_task_id, source_run_id, source_map_index, timestamp_range],
+        statement=base_statement,
+        filters=[
+            asset_id,
+            source_dag_id,
+            source_task_id,
+            source_run_id,
+            source_map_index,
+            name_pattern,
+            timestamp_range,
+        ],
         order_by=order_by,
         offset=offset,
         limit=limit,
@@ -296,7 +372,8 @@ def create_asset_event(
 )
 def materialize_asset(
     asset_id: int,
-    request: Request,
+    dag_bag: DagBagDep,
+    user: GetUserDep,
     session: SessionDep,
 ) -> DAGRunResponse:
     """Materialize an asset by triggering a DAG run that produces it."""
@@ -317,10 +394,7 @@ def materialize_asset(
             f"More than one DAG materializes asset with ID: {asset_id}",
         )
 
-    dag: DAG | None
-    if not (dag := request.app.state.dag_bag.get_dag(dag_id)):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"DAG with ID `{dag_id}` was not found")
-
+    dag = get_latest_version_of_dag(dag_bag, dag_id, session)
     return dag.create_dagrun(
         run_id=dag.timetable.generate_run_id(
             run_type=DagRunType.MANUAL,
@@ -330,6 +404,7 @@ def materialize_asset(
         run_after=run_after,
         run_type=DagRunType.MANUAL,
         triggered_by=DagRunTriggeredByType.REST_API,
+        triggering_user_name=user.get_name(),
         state=DagRunState.QUEUED,
         session=session,
     )
@@ -350,7 +425,7 @@ def get_asset_queued_events(
     where_clause = _generate_queued_event_where_clause(
         asset_id=asset_id, before=before, permitted_dag_ids=readable_dags_filter.value
     )
-    query = select(AssetDagRunQueue).where(*where_clause)
+    query = select(AssetDagRunQueue).where(*where_clause).options(joinedload(AssetDagRunQueue.dag_model))
 
     dag_asset_queued_events_select, total_entries = paginated_select(statement=query)
     adrqs = session.scalars(dag_asset_queued_events_select).all()
@@ -362,7 +437,12 @@ def get_asset_queued_events(
         )
 
     queued_events = [
-        QueuedEventResponse(created_at=adrq.created_at, dag_id=adrq.target_dag_id, asset_id=adrq.asset_id)
+        QueuedEventResponse(
+            created_at=adrq.created_at,
+            dag_id=adrq.target_dag_id,
+            asset_id=adrq.asset_id,
+            dag_display_name=adrq.dag_model.dag_display_name,
+        )
         for adrq in adrqs
     ]
 
@@ -385,16 +465,56 @@ def get_asset(
     session: SessionDep,
 ) -> AssetResponse:
     """Get an asset."""
+    # Build a subquery to be used to retrieve the latest AssetEvent by matching timestamp
+    last_asset_event = (
+        select(func.max(AssetEvent.timestamp)).where(AssetEvent.asset_id == asset_id).scalar_subquery()
+    )
+
+    # Now, find the latest AssetEvent details using the subquery from above
+    asset_event_rows = session.execute(
+        select(AssetEvent.asset_id, AssetEvent.id, AssetEvent.timestamp).where(
+            AssetEvent.asset_id == asset_id, AssetEvent.timestamp == last_asset_event
+        )
+    ).one_or_none()
+
+    # Retrieve the Asset; there should only be one for that asset_id
     asset = session.scalar(
         select(AssetModel)
         .where(AssetModel.id == asset_id)
-        .options(joinedload(AssetModel.consuming_dags), joinedload(AssetModel.producing_tasks))
+        .options(
+            joinedload(AssetModel.scheduled_dags),
+            joinedload(AssetModel.producing_tasks),
+            joinedload(AssetModel.consuming_tasks),
+            joinedload(AssetModel.watchers).joinedload(AssetWatcherModel.trigger),
+        )
     )
+
+    last_asset_event_id = asset_event_rows[1] if asset_event_rows else None
+    last_asset_event_timestamp = asset_event_rows[2] if asset_event_rows else None
 
     if asset is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"The Asset with ID: `{asset_id}` was not found")
 
-    return AssetResponse.model_validate(asset)
+    watchers_data = [
+        {
+            "name": watcher.name,
+            "trigger_id": watcher.trigger_id,
+            "created_date": watcher.trigger.created_date,
+        }
+        for watcher in asset.watchers
+    ]
+
+    return AssetResponse.model_validate(
+        {
+            **asset.__dict__,
+            "aliases": asset.aliases,
+            "watchers": watchers_data,
+            "last_asset_event": {
+                "id": last_asset_event_id,
+                "timestamp": last_asset_event_timestamp,
+            },
+        }
+    )
 
 
 @assets_router.get(
@@ -412,7 +532,7 @@ def get_dag_asset_queued_events(
     where_clause = _generate_queued_event_where_clause(
         dag_id=dag_id, before=before, permitted_dag_ids=readable_dags_filter.value
     )
-    query = select(AssetDagRunQueue).where(*where_clause)
+    query = select(AssetDagRunQueue).where(*where_clause).options(joinedload(AssetDagRunQueue.dag_model))
 
     dag_asset_queued_events_select, total_entries = paginated_select(statement=query)
     adrqs = session.scalars(dag_asset_queued_events_select).all()
@@ -420,7 +540,12 @@ def get_dag_asset_queued_events(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Queue event with dag_id: `{dag_id}` was not found")
 
     queued_events = [
-        QueuedEventResponse(created_at=adrq.created_at, dag_id=adrq.target_dag_id, asset_id=adrq.asset_id)
+        QueuedEventResponse(
+            created_at=adrq.created_at,
+            dag_id=adrq.target_dag_id,
+            asset_id=adrq.asset_id,
+            dag_display_name=adrq.dag_model.dag_display_name,
+        )
         for adrq in adrqs
     ]
 
@@ -454,7 +579,12 @@ def get_dag_asset_queued_event(
             f"Queued event with dag_id: `{dag_id}` and asset_id: `{asset_id}` was not found",
         )
 
-    return QueuedEventResponse(created_at=adrq.created_at, dag_id=adrq.target_dag_id, asset_id=asset_id)
+    return QueuedEventResponse(
+        created_at=adrq.created_at,
+        dag_id=adrq.target_dag_id,
+        asset_id=asset_id,
+        dag_display_name=adrq.dag_model.dag_display_name,
+    )
 
 
 @assets_router.delete(

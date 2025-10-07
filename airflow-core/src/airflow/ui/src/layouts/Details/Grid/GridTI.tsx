@@ -18,105 +18,135 @@
  */
 import { Badge, Flex } from "@chakra-ui/react";
 import type { MouseEvent } from "react";
-import React from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { Link, useLocation, useParams } from "react-router-dom";
 
-import type { TaskInstanceState } from "openapi/requests/types.gen";
+import type { LightGridTaskInstanceSummary } from "openapi/requests/types.gen";
 import { StateIcon } from "src/components/StateIcon";
+import Time from "src/components/Time";
+import { Tooltip } from "src/components/ui";
+import { type HoverContextType, useHover } from "src/context/hover";
+import { buildTaskInstanceUrl } from "src/utils/links";
 
-type Props = {
-  readonly dagId: string;
-  readonly isGroup?: boolean;
-  readonly isMapped?: boolean | null;
-  readonly label: string;
-  readonly runId: string;
-  readonly search: string;
-  readonly state?: TaskInstanceState | null;
-  readonly taskId: string;
-};
+const handleMouseEnter =
+  (setHoveredTaskId: HoverContextType["setHoveredTaskId"]) => (event: MouseEvent<HTMLDivElement>) => {
+    const tasks = document.querySelectorAll<HTMLDivElement>(`#${event.currentTarget.id}`);
 
-const onMouseEnter = (event: MouseEvent<HTMLDivElement>) => {
-  const tasks = document.querySelectorAll<HTMLDivElement>(`#name-${event.currentTarget.id}`);
+    tasks.forEach((task) => {
+      task.style.backgroundColor = "var(--chakra-colors-info-subtle)";
+    });
 
-  tasks.forEach((task) => {
-    task.style.backgroundColor = "var(--chakra-colors-blue-subtle)";
-  });
-};
+    setHoveredTaskId(event.currentTarget.id.replaceAll("-", "."));
+  };
 
-const onMouseLeave = (event: MouseEvent<HTMLDivElement>) => {
-  const tasks = document.querySelectorAll<HTMLDivElement>(`#name-${event.currentTarget.id}`);
+const handleMouseLeave = (taskId: string, setHoveredTaskId: HoverContextType["setHoveredTaskId"]) => () => {
+  const tasks = document.querySelectorAll<HTMLDivElement>(`#${taskId.replaceAll(".", "-")}`);
 
   tasks.forEach((task) => {
     task.style.backgroundColor = "";
   });
+
+  setHoveredTaskId(undefined);
 };
 
-const Instance = ({ dagId, isGroup, isMapped, runId, search, state, taskId }: Props) => (
-  <Flex
-    alignItems="center"
-    height="20px"
-    id={taskId.replaceAll(".", "-")}
-    justifyContent="center"
-    key={taskId}
-    onMouseEnter={onMouseEnter}
-    onMouseLeave={onMouseLeave}
-    px="2px"
-    py={0}
-    transition="background-color 0.2s"
-    zIndex={1}
-  >
-    {isGroup ? (
-      <Badge
-        borderRadius={4}
-        colorPalette={state === null ? "none" : state}
-        height="14px"
-        minH={0}
-        opacity={state === "success" ? 0.6 : 1}
-        p={0}
-        variant="solid"
-        width="14px"
-      >
-        {state === undefined ? undefined : (
-          <StateIcon
-            size={10}
-            state={state}
-            style={{
-              marginLeft: "2px",
-            }}
-          />
-        )}
-      </Badge>
-    ) : (
+type Props = {
+  readonly dagId: string;
+  readonly instance: LightGridTaskInstanceSummary;
+  readonly isGroup?: boolean;
+  readonly isMapped?: boolean | null;
+  readonly label: string;
+  readonly onClick?: () => void;
+  readonly runId: string;
+  readonly search: string;
+  readonly taskId: string;
+};
+
+const Instance = ({ dagId, instance, isGroup, isMapped, onClick, runId, search, taskId }: Props) => {
+  const { setHoveredTaskId } = useHover();
+  const { groupId: selectedGroupId, taskId: selectedTaskId } = useParams();
+  const { t: translate } = useTranslation();
+  const location = useLocation();
+
+  const onMouseEnter = handleMouseEnter(setHoveredTaskId);
+  const onMouseLeave = handleMouseLeave(taskId, setHoveredTaskId);
+
+  const getTaskUrl = useCallback(
+    () =>
+      buildTaskInstanceUrl({
+        currentPathname: location.pathname,
+        dagId,
+        isGroup,
+        isMapped: Boolean(isMapped),
+        runId,
+        taskId,
+      }),
+    [dagId, isGroup, isMapped, location.pathname, runId, taskId],
+  );
+
+  return (
+    <Flex
+      alignItems="center"
+      bg={selectedTaskId === taskId || selectedGroupId === taskId ? "info.muted" : undefined}
+      height="20px"
+      id={taskId.replaceAll(".", "-")}
+      justifyContent="center"
+      key={taskId}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      position="relative"
+      px="2px"
+      py={0}
+      transition="background-color 0.2s"
+    >
       <Link
+        id={`grid-${runId}-${taskId}`}
+        onClick={onClick}
         replace
         to={{
-          pathname: `/dags/${dagId}/runs/${runId}/tasks/${taskId}${isMapped ? "/mapped" : ""}`,
+          pathname: getTaskUrl(),
           search,
         }}
       >
-        <Badge
-          borderRadius={4}
-          colorPalette={state === null ? "none" : state}
-          height="14px"
-          minH={0}
-          opacity={state === "success" ? 0.6 : 1}
-          p={0}
-          variant="solid"
-          width="14px"
+        <Tooltip
+          content={
+            <>
+              {translate("taskId")}: {taskId}
+              <br />
+              {translate("state")}: {instance.state}
+              {instance.min_start_date !== null && (
+                <>
+                  <br />
+                  {translate("startDate")}: <Time datetime={instance.min_start_date} />
+                </>
+              )}
+              {instance.max_end_date !== null && (
+                <>
+                  <br />
+                  {translate("endDate")}: <Time datetime={instance.max_end_date} />
+                </>
+              )}
+            </>
+          }
         >
-          {state === undefined ? undefined : (
-            <StateIcon
-              size={10}
-              state={state}
-              style={{
-                marginLeft: "2px",
-              }}
-            />
-          )}
-        </Badge>
+          <Badge
+            alignItems="center"
+            borderRadius={4}
+            colorPalette={instance.state ?? "none"}
+            display="flex"
+            height="14px"
+            justifyContent="center"
+            minH={0}
+            p={0}
+            variant="solid"
+            width="14px"
+          >
+            <StateIcon size={10} state={instance.state} />
+          </Badge>
+        </Tooltip>
       </Link>
-    )}
-  </Flex>
-);
+    </Flex>
+  );
+};
 
 export const GridTI = React.memo(Instance);

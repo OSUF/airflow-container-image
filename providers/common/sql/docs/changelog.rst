@@ -25,6 +25,167 @@
 Changelog
 ---------
 
+1.28.1
+......
+
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix: rows_processor in SQLInsertRowsOperator (#55290)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Switch all airflow logging to structlog (#52651)``
+
+1.28.0
+......
+
+
+Features
+~~~~~~~~
+
+* ``Add SQLInsertRowsOperator in common.sql provider (#55031)``
+* ``Added paginated_sql_statement_clause parameter to GenericTransfer (#48866)``
+* ``Add rudimentary support for psycopg3 (#52976)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fixed resolving of dialect name when host of JdbcHook is an JDBC URL (#54446)``
+
+Misc
+~~~~
+
+* ``Remove unneeded isort skip comments (#54979)``
+
+Doc-only
+~~~~~~~~
+
+* ``Make term Dag consistent in providers docs (#55101)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove airflow.models.DAG (#54383)``
+   * ``Replace API server's direct Connection access workaround in BaseHook (#54083)``
+   * ``Switch pre-commit to prek (#54258)``
+   * ``make bundle_name not nullable (#47592)``
+
+.. Review and move the new changes to one of the sections above:
+   * ``Fix Airflow 2 reference in README/index of providers (#55240)``
+
+1.27.5
+......
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix SnowflakeCheckOperator and SnowflakeValueCheckOperator to use parameters arg correctly (#53837)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+1.27.4
+......
+
+Misc
+~~~~
+
+* ``Fix unreachable code mypy warnings in teradata provider (#53488)``
+* ``Add sql extras to pandas in the providers where sqlalchemy is needed (#53535)``
+* ``Add Python 3.13 support for Airflow. (#46891)``
+* ``Cleanup type ignores (#53297)``
+* ``Remove type ignore across codebase after mypy upgrade (#53243)``
+* ``Remove upper-binding for "python-requires" (#52980)``
+* ``Temporarily switch to use >=,< pattern instead of '~=' (#52967)``
+* ``Move all BaseHook usages to version_compat in Common SQL (#52800)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add run_on_latest_version support for backfill and clear operations (#52177)``
+   * ``Make dag_version_id in TI non-nullable (#50825)``
+
+1.27.3
+......
+
+Misc
+~~~~
+
+* ``Move 'BaseHook' implementation to task SDK (#51873)``
+* ``Replace models.BaseOperator to Task SDK one for Common Providers (#52443)``
+* ``Drop support for Python 3.9 (#52072)``
+* ``Use BaseSensorOperator from task sdk in providers (#52296)``
+* ``Bump upper binding on pandas in all providers (#52060)``
+
+Doc-only
+~~~~~~~~
+
+* ``Minor pre-commit fixes (#51769)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Clean up messy default connection overrides in provider tests (#52137)``
+   * ``Remove pytest db markers from common sql provider (#52105)``
+
+1.27.2
+......
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix: Use source hook instead of destination hook when reading records in non-paginated mode in GenericTransfer (#50598)``
+
+Misc
+~~~~
+
+* ``Port ''ti.run'' to Task SDK execution path (#50141)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+1.27.1
+......
+
+Misc
+~~~~
+
+* ``Update deprecated functions to use stable functions (#50275)``
+* ``Update type to follow newest tpying spec (#50229)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Update description of provider.yaml dependencies (#50231)``
+   * ``Add test for  overload (#50200)``
+
+1.27.0
+......
+
+.. note::
+  This release of provider is only available for Airflow 2.10+ as explained in the
+  `Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>`_.
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix SADeprecationWarning when using inspector with SQLAlchemy in DbApiHook (#48938)``
+* ``Fix: SQLExecuteQueryOperator does not pass extra_dejson values to hook_params (#49282)``
+
+Misc
+~~~~
+
+* ``Refine type overload for 'common-sql' (#50161)``
+* ``Bump min Airflow version in providers to 2.10 (#49843)``
+* ``refactor: Log generated SQL-statement and passed parameters as ERROR message when an exception occurs during insert_rows (#48932)``
+
+Doc-only
+~~~~~~~~
+
+* ``Update standard provider doc operators in core operators-and-hooks-ref.rst (#49401)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Avoid committing history for providers (#49907)``
+
 1.26.0
 ......
 

@@ -24,17 +24,18 @@ import argparse
 import json
 import os
 import textwrap
-from collections.abc import Iterable
-from typing import Callable, NamedTuple, Union
+from collections.abc import Callable, Iterable
+from typing import NamedTuple
 
 import lazy_object_proxy
 
+from airflow._shared.timezones.timezone import parse as parsedate
 from airflow.cli.commands.legacy_commands import check_legacy_command
 from airflow.configuration import conf
+from airflow.jobs.job import JobState
 from airflow.utils.cli import ColorMode
 from airflow.utils.module_loading import import_string
-from airflow.utils.state import DagRunState, JobState
-from airflow.utils.timezone import parse as parsedate
+from airflow.utils.state import DagRunState
 
 BUILD_DOCS = "BUILDING_AIRFLOW_DOCS" in os.environ
 
@@ -177,11 +178,6 @@ ARG_OUTPUT_PATH = Arg(
     type=str,
     default="[CWD]" if BUILD_DOCS else os.getcwd(),
 )
-ARG_DRY_RUN = Arg(
-    ("-n", "--dry-run"),
-    help="Perform a dry run for each task. Only renders Template Fields for each task, nothing else",
-    action="store_true",
-)
 ARG_PID = Arg(("--pid",), help="PID file location", nargs="?")
 ARG_DAEMON = Arg(
     ("-D", "--daemon"), help="Daemonize instead of running in the foreground", action="store_true"
@@ -309,6 +305,8 @@ ARG_VERBOSE = Arg(("-v", "--verbose"), help="Make logging output more verbose", 
 ARG_LOCAL = Arg(("-l", "--local"), help="Run the task using the LocalExecutor", action="store_true")
 ARG_POOL = Arg(("--pool",), "Resource pool to use")
 
+# teams
+ARG_TEAM_NAME = Arg(("name",), help="Team name")
 
 # backfill
 ARG_BACKFILL_DAG = Arg(flags=("--dag-id",), help="The dag to backfill.", required=True)
@@ -345,6 +343,14 @@ ARG_BACKFILL_REPROCESS_BEHAVIOR = Arg(
     ),
     choices=("none", "completed", "failed"),
 )
+ARG_BACKFILL_RUN_ON_LATEST_VERSION = Arg(
+    ("--run-on-latest-version",),
+    help=(
+        "(Experimental) If set, the backfill will run tasks using the latest bundle version instead of "
+        "the version that was active when the original Dag run was created."
+    ),
+    action="store_true",
+)
 
 
 # misc
@@ -355,6 +361,13 @@ ARG_TREAT_DAG_ID_AS_REGEX = Arg(
 )
 
 # test_dag
+ARG_DAGFILE_PATH = Arg(
+    (
+        "-f",
+        "--dagfile-path",
+    ),
+    help="Path to the dag file. Can be absolute or relative to current directory",
+)
 ARG_SHOW_DAGRUN = Arg(
     ("--show-dagrun",),
     help=(
@@ -481,6 +494,15 @@ ARG_DB_RETRY_DELAY = Arg(
     type=positive_int(allow_zero=False),
     help="Wait time between retries in seconds",
 )
+ARG_DB_BATCH_SIZE = Arg(
+    ("--batch-size",),
+    default=None,
+    type=positive_int(allow_zero=False),
+    help=(
+        "Maximum number of rows to delete or archive in a single transaction.\n"
+        "Lower values reduce long-running locks but increase the number of batches."
+    ),
+)
 
 # pool
 ARG_POOL_NAME = Arg(("pool",), metavar="NAME", help="Pool name")
@@ -521,7 +543,7 @@ ARG_VAR_DESCRIPTION = Arg(
 )
 ARG_DESERIALIZE_JSON = Arg(("-j", "--json"), help="Deserialize JSON variable", action="store_true")
 ARG_SERIALIZE_JSON = Arg(("-j", "--json"), help="Serialize JSON variable", action="store_true")
-ARG_VAR_IMPORT = Arg(("file",), help="Import variables from JSON file")
+ARG_VAR_IMPORT = Arg(("file",), help="Import variables from .env, .json, .yaml or .yml file")
 ARG_VAR_EXPORT = Arg(
     ("file",),
     help="Export all variables to JSON file",
@@ -592,6 +614,12 @@ ARG_DB_SKIP_INIT = Arg(
     default=False,
 )
 
+ARG_DB_MANAGER_PATH = Arg(
+    ("import_path",),
+    help="The import path of the database manager to use. ",
+    default=None,
+)
+
 # api-server
 ARG_API_SERVER_PORT = Arg(
     ("-p", "--port"),
@@ -616,10 +644,10 @@ ARG_API_SERVER_HOSTNAME = Arg(
     default=conf.get("api", "host"),
     help="Set the host on which to run the API server",
 )
-ARG_API_SERVER_ACCESS_LOGFILE = Arg(
-    ("-A", "--access-logfile"),
-    default=conf.get("api", "access_logfile"),
-    help="The logfile to store the access log. Use '-' to print to stdout",
+ARG_API_SERVER_LOG_CONFIG = Arg(
+    ("--log-config",),
+    default=conf.get("api", "log_config", fallback=None),
+    help="(Optional) Path to the logging configuration file for the uvicorn server. If not set, the default uvicorn logging configuration will be used.",
 )
 ARG_API_SERVER_APPS = Arg(
     ("--apps",),
@@ -915,7 +943,7 @@ class GroupCommand(NamedTuple):
     epilog: str | None = None
 
 
-CLICommand = Union[ActionCommand, GroupCommand]
+CLICommand = ActionCommand | GroupCommand
 
 ASSETS_COMMANDS = (
     ActionCommand(
@@ -951,6 +979,7 @@ BACKFILL_COMMANDS = (
             ARG_RUN_BACKWARDS,
             ARG_MAX_ACTIVE_RUNS,
             ARG_BACKFILL_REPROCESS_BEHAVIOR,
+            ARG_BACKFILL_RUN_ON_LATEST_VERSION,
             ARG_BACKFILL_DRY_RUN,
         ),
     ),
@@ -1124,6 +1153,16 @@ DAGS_COMMANDS = (
         description=(
             "Execute one single DagRun for a given DAG and logical date.\n"
             "\n"
+            "You can test a DAG in three ways:\n"
+            "1. Using default bundle:\n"
+            "   airflow dags test <DAG_ID>\n"
+            "\n"
+            "2. Using a specific bundle if multiple DAG bundles are configured:\n"
+            "   airflow dags test <DAG_ID> --bundle-name <BUNDLE_NAME> (or -B <BUNDLE_NAME>)\n"
+            "\n"
+            "3. Using a specific DAG file:\n"
+            "   airflow dags test <DAG_ID> --dagfile-path <PATH> (or -f <PATH>)\n"
+            "\n"
             "The --imgcat-dagrun option only works in iTerm.\n"
             "\n"
             "For more information, see: https://www.iterm2.com/documentation-images.html\n"
@@ -1144,6 +1183,8 @@ DAGS_COMMANDS = (
         args=(
             ARG_DAG_ID,
             ARG_LOGICAL_DATE_OPTIONAL,
+            ARG_BUNDLE_NAME,
+            ARG_DAGFILE_PATH,
             ARG_CONF,
             ARG_SHOW_DAGRUN,
             ARG_IMGCAT_DAGRUN,
@@ -1251,7 +1292,6 @@ TASKS_COMMANDS = (
             ARG_TASK_ID,
             ARG_LOGICAL_DATE_OR_RUN_ID_OPTIONAL,
             ARG_BUNDLE_NAME,
-            ARG_DRY_RUN,
             ARG_TASK_PARAMS,
             ARG_POST_MORTEM,
             ARG_ENV_VARS,
@@ -1353,6 +1393,26 @@ VARIABLES_COMMANDS = (
         args=(ARG_VAR_EXPORT, ARG_VERBOSE),
     ),
 )
+TEAMS_COMMANDS = (
+    ActionCommand(
+        name="create",
+        help="Create a team",
+        func=lazy_load_command("airflow.cli.commands.team_command.team_create"),
+        args=(ARG_TEAM_NAME, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name="delete",
+        help="Delete a team",
+        func=lazy_load_command("airflow.cli.commands.team_command.team_delete"),
+        args=(ARG_TEAM_NAME, ARG_YES, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name="list",
+        help="List teams",
+        func=lazy_load_command("airflow.cli.commands.team_command.team_list"),
+        args=(ARG_OUTPUT, ARG_VERBOSE),
+    ),
+)
 DB_COMMANDS = (
     ActionCommand(
         name="check-migrations",
@@ -1433,6 +1493,7 @@ DB_COMMANDS = (
             ARG_VERBOSE,
             ARG_YES,
             ARG_DB_SKIP_ARCHIVE,
+            ARG_DB_BATCH_SIZE,
         ),
     ),
     ActionCommand(
@@ -1598,6 +1659,12 @@ PROVIDERS_COMMANDS = (
         args=(ARG_OUTPUT, ARG_VERBOSE),
     ),
     ActionCommand(
+        name="queues",
+        help="Get information about queues provided",
+        func=lazy_load_command("airflow.cli.commands.provider_command.queues_list"),
+        args=(ARG_OUTPUT, ARG_VERBOSE),
+    ),
+    ActionCommand(
         name="notifications",
         help="Get information about notifications provided",
         func=lazy_load_command("airflow.cli.commands.provider_command.notifications_list"),
@@ -1706,6 +1773,59 @@ JOBS_COMMANDS = (
     ),
 )
 
+DB_MANAGERS_COMMANDS = (
+    ActionCommand(
+        name="reset",
+        help="Burn down and rebuild the specified external database",
+        func=lazy_load_command("airflow.cli.commands.db_manager_command.resetdb"),
+        args=(ARG_DB_MANAGER_PATH, ARG_YES, ARG_DB_SKIP_INIT, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name="migrate",
+        help="Migrates the specified external database to the latest version",
+        description=(
+            "Migrate the schema of the metadata database. "
+            "Create the database if it does not exist "
+            "To print but not execute commands, use option ``--show-sql-only``. "
+            "If using options ``--from-revision`` or ``--from-version``, you must also use "
+            "``--show-sql-only``, because if actually *running* migrations, we should only "
+            "migrate from the *current* Alembic revision."
+        ),
+        func=lazy_load_command("airflow.cli.commands.db_manager_command.migratedb"),
+        args=(
+            ARG_DB_MANAGER_PATH,
+            ARG_DB_REVISION__UPGRADE,
+            ARG_DB_VERSION__UPGRADE,
+            ARG_DB_SQL_ONLY,
+            ARG_DB_FROM_REVISION,
+            ARG_DB_FROM_VERSION,
+            ARG_VERBOSE,
+        ),
+    ),
+    ActionCommand(
+        name="downgrade",
+        help="Downgrade the schema of the external metadata database.",
+        description=(
+            "Downgrade the schema of the metadata database. "
+            "You must provide either `--to-revision` or `--to-version`. "
+            "To print but not execute commands, use option `--show-sql-only`. "
+            "If using options `--from-revision` or `--from-version`, you must also use `--show-sql-only`, "
+            "because if actually *running* migrations, we should only migrate from the *current* Alembic "
+            "revision."
+        ),
+        func=lazy_load_command("airflow.cli.commands.db_manager_command.downgrade"),
+        args=(
+            ARG_DB_MANAGER_PATH,
+            ARG_DB_REVISION__DOWNGRADE,
+            ARG_DB_VERSION__DOWNGRADE,
+            ARG_DB_SQL_ONLY,
+            ARG_YES,
+            ARG_DB_FROM_REVISION,
+            ARG_DB_FROM_VERSION,
+            ARG_VERBOSE,
+        ),
+    ),
+)
 core_commands: list[CLICommand] = [
     GroupCommand(
         name="dags",
@@ -1736,6 +1856,11 @@ core_commands: list[CLICommand] = [
         name="variables",
         help="Manage variables",
         subcommands=VARIABLES_COMMANDS,
+    ),
+    GroupCommand(
+        name="teams",
+        help="Manage teams",
+        subcommands=TEAMS_COMMANDS,
     ),
     GroupCommand(
         name="jobs",
@@ -1776,7 +1901,7 @@ core_commands: list[CLICommand] = [
             ARG_DAEMON,
             ARG_STDOUT,
             ARG_STDERR,
-            ARG_API_SERVER_ACCESS_LOGFILE,
+            ARG_API_SERVER_LOG_CONFIG,
             ARG_API_SERVER_APPS,
             ARG_LOG_FILE,
             ARG_SSL_CERT,
@@ -1894,6 +2019,11 @@ core_commands: list[CLICommand] = [
         help="Run an all-in-one copy of Airflow",
         func=lazy_load_command("airflow.cli.commands.standalone_command.standalone"),
         args=(),
+    ),
+    GroupCommand(
+        name="db-manager",
+        help="Manage externally connected database managers",
+        subcommands=DB_MANAGERS_COMMANDS,
     ),
 ]
 

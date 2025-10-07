@@ -24,8 +24,12 @@ from airflow.models import Param
 from airflow.models.xcom_arg import XComArg
 
 if TYPE_CHECKING:
-    from airflow.sdk import DAG
-    from airflow.sdk.definitions._internal.abstractoperator import Operator
+    from airflow.providers.openlineage.utils.utils import AnyOperator
+    from airflow.sdk import DAG, BaseOperator
+    from airflow.sdk.definitions.mappedoperator import MappedOperator
+    from airflow.serialization.serialized_objects import SerializedDAG
+
+    T = TypeVar("T", bound=DAG | BaseOperator | MappedOperator)
 else:
     try:
         from airflow.sdk import DAG
@@ -35,10 +39,6 @@ else:
 ENABLE_OL_PARAM_NAME = "_selective_enable_ol"
 ENABLE_OL_PARAM = Param(True, const=True)
 DISABLE_OL_PARAM = Param(False, const=False)
-T = TypeVar("T", bound="DAG | Operator")
-
-if TYPE_CHECKING:
-    from airflow.sdk.bases.operator import BaseOperator as SdkBaseOperator
 
 
 log = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def disable_lineage(obj: T) -> T:
     return obj
 
 
-def is_task_lineage_enabled(task: Operator | SdkBaseOperator) -> bool:
+def is_task_lineage_enabled(task: AnyOperator) -> bool:
     """Check if selective enable OpenLineage parameter is set to True on task level."""
     if task.params.get(ENABLE_OL_PARAM_NAME) is False:
         log.debug(
@@ -87,7 +87,7 @@ def is_task_lineage_enabled(task: Operator | SdkBaseOperator) -> bool:
     return task.params.get(ENABLE_OL_PARAM_NAME) is True
 
 
-def is_dag_lineage_enabled(dag: DAG) -> bool:
+def is_dag_lineage_enabled(dag: DAG | SerializedDAG) -> bool:
     """
     Check if DAG is selectively enabled to emit OpenLineage events.
 

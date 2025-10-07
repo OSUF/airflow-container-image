@@ -18,12 +18,13 @@
  */
 
 /* eslint-disable perfectionist/sort-objects */
-import { FiXCircle } from "react-icons/fi";
-
 import type { PoolResponse } from "openapi/requests/types.gen";
 import { StateIcon } from "src/components/StateIcon";
 
-export type Slots = Omit<PoolResponse, "description" | "include_deferred" | "name" | "slots">;
+export type Slots = Omit<
+  PoolResponse,
+  "description" | "include_deferred" | "name" | "occupied_slots" | "slots"
+>;
 export type SlotConfig = {
   color: string;
   icon: JSX.Element;
@@ -34,38 +35,32 @@ export const slotConfigs: Array<SlotConfig> = [
   {
     key: "open_slots",
     color: "success",
-    icon: <StateIcon color="white" state="success" />,
-  },
-  {
-    key: "occupied_slots",
-    color: "up_for_retry",
-    icon: <FiXCircle color="white" />,
+    icon: <StateIcon color="fg" state="success" />,
   },
   {
     key: "running_slots",
     color: "running",
-    icon: <StateIcon color="white" state="running" />,
+    icon: <StateIcon color="fg" state="running" />,
   },
   {
     key: "queued_slots",
     color: "queued",
-    icon: <StateIcon color="white" state="queued" />,
+    icon: <StateIcon color="fg" state="queued" />,
   },
   {
     key: "scheduled_slots",
     color: "scheduled",
-    icon: <StateIcon color="white" state="scheduled" />,
+    icon: <StateIcon color="fg" state="scheduled" />,
   },
   {
     key: "deferred_slots",
     color: "deferred",
-    icon: <StateIcon color="white" state="deferred" />,
+    icon: <StateIcon color="fg" state="deferred" />,
   },
 ];
 
 export const slotKeys: Array<keyof Slots> = [
   "deferred_slots",
-  "occupied_slots",
   "open_slots",
   "queued_slots",
   "running_slots",

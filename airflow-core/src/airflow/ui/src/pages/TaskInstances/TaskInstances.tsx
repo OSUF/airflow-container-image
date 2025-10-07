@@ -16,9 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
+/* eslint-disable max-lines */
 import { Flex, Link } from "@chakra-ui/react";
 import type { ColumnDef } from "@tanstack/react-table";
+import type { TFunction } from "i18next";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link as RouterLink, useParams, useSearchParams } from "react-router-dom";
 
 import { useTaskInstanceServiceGetTaskInstances } from "openapi/queries";
@@ -33,32 +37,48 @@ import { StateBadge } from "src/components/StateBadge";
 import Time from "src/components/Time";
 import { TruncatedText } from "src/components/TruncatedText";
 import { SearchParamsKeys, type SearchParamsKeysType } from "src/constants/searchParams";
-import { getDuration, useAutoRefresh, isStatePending } from "src/utils";
+import { useAutoRefresh, isStatePending, renderDuration } from "src/utils";
 import { getTaskInstanceLink } from "src/utils/links";
 
+import DeleteTaskInstanceButton from "./DeleteTaskInstanceButton";
 import { TaskInstancesFilter } from "./TaskInstancesFilter";
 
 type TaskInstanceRow = { row: { original: TaskInstanceResponse } };
 
 const {
+  DAG_ID_PATTERN: DAG_ID_PATTERN_PARAM,
   END_DATE: END_DATE_PARAM,
   NAME_PATTERN: NAME_PATTERN_PARAM,
+  POOL: POOL_PARAM,
   START_DATE: START_DATE_PARAM,
   STATE: STATE_PARAM,
 }: SearchParamsKeysType = SearchParamsKeys;
 
-const taskInstanceColumns = (
-  dagId?: string,
-  runId?: string,
-  taskId?: string,
-): Array<ColumnDef<TaskInstanceResponse>> => [
+const taskInstanceColumns = ({
+  dagId,
+  runId,
+  taskId,
+  translate,
+}: {
+  dagId?: string;
+  runId?: string;
+  taskId?: string;
+  translate: TFunction;
+}): Array<ColumnDef<TaskInstanceResponse>> => [
   ...(Boolean(dagId)
     ? []
     : [
         {
-          accessorKey: "dag_id",
+          accessorKey: "dag_display_name",
+          cell: ({ row: { original } }: TaskInstanceRow) => (
+            <Link asChild color="fg.info">
+              <RouterLink to={`/dags/${original.dag_id}`}>
+                <TruncatedText text={original.dag_display_name} />
+              </RouterLink>
+            </Link>
+          ),
           enableSorting: false,
-          header: "Dag ID",
+          header: translate("dagId"),
         },
       ]),
   ...(Boolean(runId)
@@ -77,7 +97,7 @@ const taskInstanceColumns = (
             ) : (
               <Time datetime={original.run_after} />
             ),
-          header: "Dag Run",
+          header: translate("dagRun_one"),
         },
       ]),
   ...(Boolean(taskId)
@@ -93,17 +113,25 @@ const taskInstanceColumns = (
             </Link>
           ),
           enableSorting: false,
-          header: "Task ID",
+          header: translate("taskId"),
         },
       ]),
+  {
+    accessorKey: "rendered_map_index",
+    header: translate("mapIndex"),
+  },
   {
     accessorKey: "state",
     cell: ({
       row: {
         original: { state },
       },
-    }) => <StateBadge state={state}>{state}</StateBadge>,
-    header: () => "State",
+    }) => (
+      <StateBadge state={state}>
+        {state ? translate(`common:states.${state}`) : translate("common:states.no_status")}
+      </StateBadge>
+    ),
+    header: () => translate("state"),
   },
   {
     accessorKey: "start_date",
@@ -117,37 +145,53 @@ const taskInstanceColumns = (
       ) : (
         <Time datetime={original.start_date} />
       ),
-    header: "Start Date",
+    header: translate("startDate"),
   },
   {
     accessorKey: "end_date",
     cell: ({ row: { original } }) => <Time datetime={original.end_date} />,
-    header: "End Date",
-  },
-  {
-    accessorKey: "rendered_map_index",
-    header: "Map Index",
+    header: translate("endDate"),
   },
   {
     accessorKey: "try_number",
     enableSorting: false,
-    header: "Try Number",
+    header: translate("tryNumber"),
   },
   {
-    accessorKey: "operator",
+    accessorKey: "pool",
     enableSorting: false,
-    header: "Operator",
+    header: translate("taskInstance.pool"),
   },
   {
-    cell: ({ row: { original } }) =>
-      Boolean(original.start_date) ? getDuration(original.start_date, original.end_date) : "",
-    header: "Duration",
+    accessorKey: "queue",
+    enableSorting: false,
+    header: translate("taskInstance.queue"),
+  },
+  {
+    accessorKey: "executor",
+    enableSorting: false,
+    header: translate("taskInstance.executor"),
+  },
+  {
+    accessorKey: "hostname",
+    enableSorting: false,
+    header: translate("taskInstance.hostname"),
+  },
+  {
+    accessorKey: "operator_name",
+    enableSorting: false,
+    header: translate("task.operator"),
+  },
+  {
+    accessorKey: "duration",
+    cell: ({ row: { original } }) => renderDuration(original.duration),
+    header: translate("duration"),
   },
   {
     accessorKey: "dag_version",
     cell: ({ row: { original } }) => <DagVersion version={original.dag_version} />,
     enableSorting: false,
-    header: "Dag Version",
+    header: translate("taskInstance.dagVersion"),
   },
   {
     accessorKey: "actions",
@@ -155,6 +199,7 @@ const taskInstanceColumns = (
       <Flex justifyContent="end">
         <ClearTaskInstanceButton taskInstance={row.original} withText={false} />
         <MarkTaskInstanceAsButton taskInstance={row.original} withText={false} />
+        <DeleteTaskInstanceButton taskInstance={row.original} withText={false} />
       </Flex>
     ),
     enableSorting: false,
@@ -166,17 +211,30 @@ const taskInstanceColumns = (
 ];
 
 export const TaskInstances = () => {
-  const { dagId, runId, taskId } = useParams();
+  const { t: translate } = useTranslation();
+  const { dagId, groupId, runId, taskId } = useParams();
   const [searchParams] = useSearchParams();
-  const { setTableURLState, tableURLState } = useTableURLState();
+  const { setTableURLState, tableURLState } = useTableURLState({
+    columnVisibility: {
+      dag_version: false,
+      end_date: false,
+      executor: false,
+      hostname: false,
+      pool: false,
+      queue: false,
+    },
+  });
   const { pagination, sorting } = tableURLState;
   const [sort] = sorting;
-  const orderBy = sort ? `${sort.desc ? "-" : ""}${sort.id}` : "-start_date";
+  const orderBy = sort ? [`${sort.desc ? "-" : ""}${sort.id}`] : ["-start_date", "-run_after"];
 
   const filteredState = searchParams.getAll(STATE_PARAM);
   const startDate = searchParams.get(START_DATE_PARAM);
   const endDate = searchParams.get(END_DATE_PARAM);
+  const pool = searchParams.getAll(POOL_PARAM);
+  const filteredDagIdPattern = searchParams.get(DAG_ID_PATTERN_PARAM);
   const hasFilteredState = filteredState.length > 0;
+  const hasFilteredPool = pool.length > 0;
 
   const [taskDisplayNamePattern, setTaskDisplayNamePattern] = useState(
     searchParams.get(NAME_PATTERN_PARAM) ?? undefined,
@@ -187,19 +245,20 @@ export const TaskInstances = () => {
   const { data, error, isLoading } = useTaskInstanceServiceGetTaskInstances(
     {
       dagId: dagId ?? "~",
+      dagIdPattern: filteredDagIdPattern ?? undefined,
       dagRunId: runId ?? "~",
       endDateLte: endDate ?? undefined,
       limit: pagination.pageSize,
       offset: pagination.pageIndex * pagination.pageSize,
       orderBy,
+      pool: hasFilteredPool ? pool : undefined,
       startDateGte: startDate ?? undefined,
       state: hasFilteredState ? filteredState : undefined,
-      taskDisplayNamePattern: Boolean(taskDisplayNamePattern) ? taskDisplayNamePattern : undefined,
-      taskId: taskId ?? undefined,
+      taskDisplayNamePattern: groupId ?? taskDisplayNamePattern ?? undefined,
+      taskId: Boolean(groupId) ? undefined : taskId,
     },
     undefined,
     {
-      enabled: !isNaN(pagination.pageSize),
       refetchInterval: (query) =>
         query.state.data?.task_instances.some((ti) => isStatePending(ti.state)) ? refetchInterval : false,
     },
@@ -212,12 +271,17 @@ export const TaskInstances = () => {
         taskDisplayNamePattern={taskDisplayNamePattern}
       />
       <DataTable
-        columns={taskInstanceColumns(dagId, runId, taskId)}
+        columns={taskInstanceColumns({
+          dagId,
+          runId,
+          taskId: Boolean(groupId) ? undefined : taskId,
+          translate,
+        })}
         data={data?.task_instances ?? []}
         errorMessage={<ErrorAlert error={error} />}
         initialState={tableURLState}
         isLoading={isLoading}
-        modelName="Task Instance"
+        modelName={translate("common:taskInstance_other")}
         onStateChange={setTableURLState}
         total={data?.total_entries}
       />

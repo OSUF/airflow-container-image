@@ -49,7 +49,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-apache-iceberg/|version|/providers/apache/iceberg/tests/system/apache/iceberg>
+    Example Dags <https://github.com/apache/airflow/tree/providers-apache-iceberg/|version|/providers/apache/iceberg/tests/system/apache/iceberg>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-apache-iceberg/>
     Installing from sources <installing-providers-from-sources>
     Python API <_api/airflow/providers/apache/iceberg/index>
@@ -73,7 +73,7 @@ apache-airflow-providers-apache-iceberg package
 `Iceberg <https://iceberg.apache.org/>`__
 
 
-Release: 1.2.1
+Release: 1.3.2
 
 Provider package
 ----------------
@@ -84,17 +84,17 @@ All classes for this package are included in the ``airflow.providers.apache.iceb
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation via
+You can install this package on top of an existing Airflow installation via
 ``pip install apache-airflow-providers-apache-iceberg``.
 For the minimum Airflow version supported, see ``Requirements`` below.
 
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.10.0``.
 
 ==================  ==================
 PIP package         Version required
 ==================  ==================
-``apache-airflow``  ``>=2.9.0``
+``apache-airflow``  ``>=2.10.0``
 ==================  ==================

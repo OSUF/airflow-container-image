@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
+from pydantic import AliasPath, Field
 
 from airflow.api_fastapi.core_api.base import BaseModel
 
@@ -38,6 +38,12 @@ class EventLogResponse(BaseModel):
     logical_date: datetime | None
     owner: str | None
     extra: str | None
+    dag_display_name: str | None = Field(
+        validation_alias=AliasPath("dag_model", "dag_display_name"), default=None
+    )
+    task_display_name: str | None = Field(
+        validation_alias=AliasPath("task_instance", "task_display_name"), default=None
+    )
 
 
 class EventLogCollectionResponse(BaseModel):

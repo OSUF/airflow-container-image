@@ -18,7 +18,10 @@
  */
 import { Box, Heading, VStack } from "@chakra-ui/react";
 import { useState } from "react";
+import { useHotkeys } from "react-hotkeys-hook";
+import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router-dom";
+import { useLocalStorage } from "usehooks-ts";
 
 import { useTaskInstanceServiceGetMappedTaskInstance } from "openapi/queries";
 import { Dialog } from "src/components/ui";
@@ -33,21 +36,29 @@ import { TaskLogHeader } from "./TaskLogHeader";
 export const Logs = () => {
   const { dagId = "", mapIndex = "-1", runId = "", taskId = "" } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t: translate } = useTranslation("dag");
 
   const tryNumberParam = searchParams.get(SearchParamsKeys.TRY_NUMBER);
   const logLevelFilters = searchParams.getAll(SearchParamsKeys.LOG_LEVEL);
   const sourceFilters = searchParams.getAll(SearchParamsKeys.SOURCE);
+  const parsedMapIndex = parseInt(mapIndex, 10);
 
   const {
     data: taskInstance,
     error,
     isLoading,
-  } = useTaskInstanceServiceGetMappedTaskInstance({
-    dagId,
-    dagRunId: runId,
-    mapIndex: parseInt(mapIndex, 10),
-    taskId,
-  });
+  } = useTaskInstanceServiceGetMappedTaskInstance(
+    {
+      dagId,
+      dagRunId: runId,
+      mapIndex: parsedMapIndex,
+      taskId,
+    },
+    undefined,
+    {
+      enabled: !isNaN(parsedMapIndex),
+    },
+  );
 
   const onSelectTryNumber = (newTryNumber: number) => {
     if (newTryNumber === taskInstance?.try_number) {
@@ -61,12 +72,28 @@ export const Logs = () => {
   const tryNumber = tryNumberParam === null ? taskInstance?.try_number : parseInt(tryNumberParam, 10);
 
   const defaultWrap = Boolean(useConfig("default_wrap"));
+  const defaultShowTimestamp = Boolean(true);
 
-  const [wrap, setWrap] = useState(defaultWrap);
+  const [wrap, setWrap] = useLocalStorage<boolean>("log_wrap", defaultWrap);
+  const [showTimestamp, setShowTimestamp] = useLocalStorage<boolean>(
+    "log_show_timestamp",
+    defaultShowTimestamp,
+  );
+  const [showSource, setShowSource] = useLocalStorage<boolean>("log_show_source", true);
   const [fullscreen, setFullscreen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const toggleWrap = () => setWrap(!wrap);
+  const toggleTimestamp = () => setShowTimestamp(!showTimestamp);
+  const toggleSource = () => setShowSource(!showSource);
   const toggleFullscreen = () => setFullscreen(!fullscreen);
+  const toggleExpanded = () => setExpanded((act) => !act);
+
+  useHotkeys("w", toggleWrap);
+  useHotkeys("f", toggleFullscreen);
+  useHotkeys("e", toggleExpanded);
+  useHotkeys("t", toggleTimestamp);
+  useHotkeys("s", toggleSource);
 
   const onOpenChange = () => {
     setFullscreen(false);
@@ -78,29 +105,38 @@ export const Logs = () => {
     isLoading: isLoadingLogs,
   } = useLogs({
     dagId,
+    expanded,
     logLevelFilters,
+    showSource,
+    showTimestamp,
     sourceFilters,
     taskInstance,
-    tryNumber: tryNumber === 0 ? 1 : tryNumber,
+    tryNumber,
   });
 
   const externalLogName = useConfig("external_log_name") as string;
   const showExternalLogRedirect = Boolean(useConfig("show_external_log_redirect"));
 
   return (
-    <Box p={2}>
+    <Box display="flex" flexDirection="column" h="100%" p={2}>
       <TaskLogHeader
+        expanded={expanded}
         onSelectTryNumber={onSelectTryNumber}
+        showSource={showSource}
+        showTimestamp={showTimestamp}
         sourceOptions={data.sources}
         taskInstance={taskInstance}
+        toggleExpanded={toggleExpanded}
         toggleFullscreen={toggleFullscreen}
+        toggleSource={toggleSource}
+        toggleTimestamp={toggleTimestamp}
         toggleWrap={toggleWrap}
         tryNumber={tryNumber}
         wrap={wrap}
       />
       {showExternalLogRedirect && externalLogName && taskInstance ? (
         tryNumber === undefined ? (
-          <p>No try number</p>
+          <p>{translate("logs.noTryNumber")}</p>
         ) : (
           <ExternalLogLink
             externalLogName={externalLogName}
@@ -113,19 +149,25 @@ export const Logs = () => {
         error={error}
         isLoading={isLoading || isLoadingLogs}
         logError={logError}
-        parsedLogs={data.parsedLogs}
+        parsedLogs={data.parsedLogs ?? []}
         wrap={wrap}
       />
       <Dialog.Root onOpenChange={onOpenChange} open={fullscreen} scrollBehavior="inside" size="full">
         <Dialog.Content backdrop>
           <Dialog.Header>
-            <VStack gap={2}>
+            <VStack alignItems="flex-start" gap={2}>
               <Heading size="xl">{taskId}</Heading>
               <TaskLogHeader
+                expanded={expanded}
                 isFullscreen
                 onSelectTryNumber={onSelectTryNumber}
+                showSource={showSource}
+                showTimestamp={showTimestamp}
                 taskInstance={taskInstance}
+                toggleExpanded={toggleExpanded}
                 toggleFullscreen={toggleFullscreen}
+                toggleSource={toggleSource}
+                toggleTimestamp={toggleTimestamp}
                 toggleWrap={toggleWrap}
                 tryNumber={tryNumber}
                 wrap={wrap}
@@ -135,12 +177,12 @@ export const Logs = () => {
 
           <Dialog.CloseTrigger />
 
-          <Dialog.Body>
+          <Dialog.Body display="flex" flexDirection="column">
             <TaskLogContent
               error={error}
               isLoading={isLoading || isLoadingLogs}
               logError={logError}
-              parsedLogs={data.parsedLogs}
+              parsedLogs={data.parsedLogs ?? []}
               wrap={wrap}
             />
           </Dialog.Body>

@@ -20,7 +20,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger
+from tests_common.test_utils.common_msg_queue import (
+    collect_queue_param_deprecation_warning,
+    mark_common_msg_queue_test,
+)
+
+USED_FIXTURES = [collect_queue_param_deprecation_warning]
 
 TEST_SQS_QUEUE = "test-sqs-queue"
 TEST_AWS_CONN_ID = "test-aws-conn-id"
@@ -39,7 +44,9 @@ TEST_BOTOCORE_CONFIG = {"region_name": "us-east-1"}
 
 class TestSqsTriggers:
     @pytest.fixture(autouse=True)
-    def _setup_test_cases(self):
+    def _setup_test_cases(self, cleanup_providers_manager):
+        from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger
+
         self.sqs_trigger = SqsSensorTrigger(
             sqs_queue=TEST_SQS_QUEUE,
             aws_conn_id=TEST_AWS_CONN_ID,
@@ -92,3 +99,24 @@ class TestSqsTriggers:
         mock_client.receive_message.return_value = mock_response
         messages = await self.sqs_trigger.poke(client=mock_client)
         assert len(messages) == 0
+
+
+@mark_common_msg_queue_test
+class TestMessageQueueTrigger:
+    @pytest.mark.usefixtures("collect_queue_param_deprecation_warning")
+    def test_provider_integrations_with_queue_param(self, cleanup_providers_manager):
+        queue = "https://sqs.us-east-1.amazonaws.com/0123456789/Test"
+        from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger
+        from airflow.providers.common.messaging.triggers.msg_queue import MessageQueueTrigger
+
+        trigger = MessageQueueTrigger(queue=queue)
+        assert isinstance(trigger.trigger, SqsSensorTrigger)
+
+    def test_provider_integrations_with_scheme_param(self, cleanup_providers_manager):
+        from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger
+        from airflow.providers.common.messaging.triggers.msg_queue import MessageQueueTrigger
+
+        trigger = MessageQueueTrigger(
+            scheme="sqs", sqs_queue="https://sqs.us-east-1.amazonaws.com/0123456789/Test"
+        )
+        assert isinstance(trigger.trigger, SqsSensorTrigger)

@@ -49,7 +49,7 @@ class AirflowTestOnLoadExceptionPlugin(AirflowPlugin):
 
 
 @pytest.fixture(autouse=True, scope="module")
-def clean_plugins():
+def _clean_listeners():
     get_listener_manager().clear()
     yield
     get_listener_manager().clear()
@@ -79,6 +79,8 @@ class TestPluginsManager:
         plugins_manager.plugins = []
 
     def test_no_log_when_no_plugins(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         with mock_plugin_manager(plugins=[]):
             from airflow import plugins_manager
 
@@ -92,7 +94,7 @@ class TestPluginsManager:
         with mock.patch("airflow.plugins_manager.plugins", []):
             plugins_manager.load_plugins_from_plugin_directory()
 
-            assert len(plugins_manager.plugins) == 9
+            assert len(plugins_manager.plugins) == 10
             for plugin in plugins_manager.plugins:
                 if "AirflowTestOnLoadPlugin" in str(plugin):
                     assert plugin.name == "postload"
@@ -118,6 +120,8 @@ class TestPluginsManager:
             assert "testplugin.py" in received_logs
 
     def test_should_warning_about_incompatible_plugins(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         class AirflowAdminViewsPlugin(AirflowPlugin):
             name = "test_admin_views_plugin"
 
@@ -151,7 +155,77 @@ class TestPluginsManager:
             ),
         ]
 
+    def test_should_warning_about_conflicting_url_route(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
+        class TestPluginA(AirflowPlugin):
+            name = "test_plugin_a"
+
+            external_views = [{"url_route": "/test_route"}, {"wrong_view": "/no_url_route"}]
+
+        class TestPluginB(AirflowPlugin):
+            name = "test_plugin_b"
+
+            external_views = [{"url_route": "/test_route"}]
+            react_apps = [{"url_route": "/test_route"}]
+
+        with (
+            mock_plugin_manager(plugins=[TestPluginA(), TestPluginB()]),
+            caplog.at_level(logging.WARNING, logger="airflow.plugins_manager"),
+        ):
+            from airflow import plugins_manager
+
+            plugins_manager.initialize_ui_plugins()
+
+            # Verify that the conflicting external view and react app are not loaded
+            plugin_b = next(plugin for plugin in plugins_manager.plugins if plugin.name == "test_plugin_b")
+            assert plugin_b.external_views == []
+            assert plugin_b.react_apps == []
+            assert len(plugins_manager.external_views) == 1
+            assert len(plugins_manager.react_apps) == 0
+
+    def test_should_warning_about_external_views_or_react_app_wrong_object(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
+        class TestPluginA(AirflowPlugin):
+            name = "test_plugin_a"
+
+            external_views = [[{"nested_list": "/test_route"}], {"url_route": "/test_route"}]
+            react_apps = [[{"nested_list": "/test_route"}], {"url_route": "/test_route_react_app"}]
+
+        with (
+            mock_plugin_manager(plugins=[TestPluginA()]),
+            caplog.at_level(logging.WARNING, logger="airflow.plugins_manager"),
+        ):
+            from airflow import plugins_manager
+
+            plugins_manager.initialize_ui_plugins()
+
+            # Verify that the conflicting external view and react app are not loaded
+            plugin_a = next(plugin for plugin in plugins_manager.plugins if plugin.name == "test_plugin_a")
+            assert plugin_a.external_views == [{"url_route": "/test_route"}]
+            assert plugin_a.react_apps == [{"url_route": "/test_route_react_app"}]
+            assert len(plugins_manager.external_views) == 1
+            assert len(plugins_manager.react_apps) == 1
+
+        assert caplog.record_tuples == [
+            (
+                "airflow.plugins_manager",
+                logging.WARNING,
+                "Plugin 'test_plugin_a' has an external view that is not a dictionary. "
+                "The view will not be loaded.",
+            ),
+            (
+                "airflow.plugins_manager",
+                logging.WARNING,
+                "Plugin 'test_plugin_a' has a React App that is not a dictionary. "
+                "The React App will not be loaded.",
+            ),
+        ]
+
     def test_should_not_warning_about_fab_plugins(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         class AirflowAdminViewsPlugin(AirflowPlugin):
             name = "test_admin_views_plugin"
 
@@ -173,6 +247,8 @@ class TestPluginsManager:
         assert caplog.record_tuples == []
 
     def test_should_not_warning_about_fab_and_flask_admin_plugins(self, caplog):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         class AirflowAdminViewsPlugin(AirflowPlugin):
             name = "test_admin_views_plugin"
 
@@ -228,17 +304,18 @@ class TestPluginsManager:
         """
         Tests whether macros that originate from plugins are being registered correctly.
         """
-        from airflow import macros
         from airflow.plugins_manager import integrate_macros_plugins
+        from airflow.sdk.execution_time import macros
 
         def cleanup_macros():
-            """Reloads the airflow.macros module such that the symbol table is reset after the test."""
+            """Reloads the macros module such that the symbol table is reset after the test."""
             # We're explicitly deleting the module from sys.modules and importing it again
             # using import_module() as opposed to using importlib.reload() because the latter
-            # does not undo the changes to the airflow.macros module that are being caused by
+            # does not undo the changes to the airflow.sdk.execution_time.macros module that are being caused by
             # invoking integrate_macros_plugins()
-            del sys.modules["airflow.macros"]
-            importlib.import_module("airflow.macros")
+
+            del sys.modules["airflow.sdk.execution_time.macros"]
+            importlib.import_module("airflow.sdk.execution_time.macros")
 
         request.addfinalizer(cleanup_macros)
 
@@ -253,12 +330,12 @@ class TestPluginsManager:
             # Ensure the macros for the plugin have been integrated.
             integrate_macros_plugins()
             # Test whether the modules have been created as expected.
-            plugin_macros = importlib.import_module(f"airflow.macros.{MacroPlugin.name}")
+            plugin_macros = importlib.import_module(f"airflow.sdk.execution_time.macros.{MacroPlugin.name}")
             for macro in MacroPlugin.macros:
                 # Verify that the macros added by the plugin are being set correctly
                 # on the plugin's macro module.
                 assert hasattr(plugin_macros, macro.__name__)
-            # Verify that the symbol table in airflow.macros has been updated with an entry for
+            # Verify that the symbol table in airflow.sdk.execution_time.macros has been updated with an entry for
             # this plugin, this is necessary in order to allow the plugin's macros to be used when
             # rendering templates.
             assert hasattr(macros, MacroPlugin.name)
@@ -267,22 +344,20 @@ class TestPluginsManager:
     def test_registering_plugin_listeners(self):
         from airflow import plugins_manager
 
-        try:
-            with mock.patch("airflow.plugins_manager.plugins", []):
-                plugins_manager.load_plugins_from_plugin_directory()
-                plugins_manager.integrate_listener_plugins(get_listener_manager())
+        assert not get_listener_manager().has_listeners
+        with mock.patch("airflow.plugins_manager.plugins", []):
+            plugins_manager.load_plugins_from_plugin_directory()
+            plugins_manager.integrate_listener_plugins(get_listener_manager())
 
-                assert get_listener_manager().has_listeners
-                listeners = get_listener_manager().pm.get_plugins()
-                listener_names = [el.__name__ if inspect.ismodule(el) else qualname(el) for el in listeners]
-                # sort names as order of listeners is not guaranteed
-                assert sorted(listener_names) == [
-                    "airflow.example_dags.plugins.event_listener",
-                    "unit.listeners.class_listener.ClassBasedListener",
-                    "unit.listeners.empty_listener",
-                ]
-        finally:
-            get_listener_manager().clear()
+            assert get_listener_manager().has_listeners
+            listeners = get_listener_manager().pm.get_plugins()
+            listener_names = [el.__name__ if inspect.ismodule(el) else qualname(el) for el in listeners]
+            # sort names as order of listeners is not guaranteed
+            assert sorted(listener_names) == [
+                "airflow.example_dags.plugins.event_listener",
+                "unit.listeners.class_listener.ClassBasedListener",
+                "unit.listeners.empty_listener",
+            ]
 
     @skip_if_force_lowest_dependencies_marker
     def test_should_import_plugin_from_providers(self):
@@ -295,6 +370,8 @@ class TestPluginsManager:
 
     @skip_if_force_lowest_dependencies_marker
     def test_does_not_double_import_entrypoint_provider_plugins(self):
+        pytest.importorskip("flask_appbuilder")  # Remove after upgrading to FAB5
+
         from airflow import plugins_manager
 
         mock_entrypoint = mock.Mock()

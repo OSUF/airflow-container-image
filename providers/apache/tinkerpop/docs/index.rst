@@ -16,7 +16,7 @@
     specific language governing permissions and limitations
     under the License.
 
-Package ``apache-airflow-providers-apache-tinkerpop``
+``apache-airflow-providers-apache-tinkerpop``
 =====================================================
 
 .. toctree::
@@ -55,7 +55,7 @@ Package ``apache-airflow-providers-apache-tinkerpop``
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-apache-tinkerpop/|version|/providers/apache/tinkerpop/tests/system/gremlin>
+    Example Dags <https://github.com/apache/airflow/tree/providers-apache-tinkerpop/|version|/providers/apache/tinkerpop/tests/system/gremlin>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-apache-tinkerpop/>
     Installing from sources <installing-providers-from-sources>
 
@@ -78,7 +78,7 @@ Apache TinkerPop is a graph computing framework for both graph databases (OLTP) 
 systems (OLAP) and Gremlin is its graph traversal language.
 
 
-Release: 1.0.0
+Release: 1.0.3
 
 Provider package
 ----------------
@@ -89,19 +89,18 @@ All classes for this package are included in the ``airflow.providers.apache.tink
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation via
+You can install this package on top of an existing Airflow installation via
 ``pip install apache-airflow-providers-apache-tinkerpop``.
 For the minimum Airflow version supported, see ``Requirements`` below.
 
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.10.0``.
 
 ==================  ==================
 PIP package         Version required
 ==================  ==================
-``apache-airflow``  ``>=2.9.0``
-``gremlinpython``   ``>=3.7.0``
-``nest-asyncio``    ``>=1.6.0``
+``apache-airflow``  ``>=2.10.0``
+``gremlinpython``   ``>=3.7.3``
 ==================  ==================

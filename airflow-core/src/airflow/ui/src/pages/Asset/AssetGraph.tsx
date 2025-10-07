@@ -22,11 +22,13 @@ import "@xyflow/react/dist/style.css";
 import { useParams } from "react-router-dom";
 
 import type { AssetResponse } from "openapi/requests/types.gen";
+import { DownloadButton } from "src/components/Graph/DownloadButton";
 import { edgeTypes, nodeTypes } from "src/components/Graph/graphTypes";
 import type { CustomNodeProps } from "src/components/Graph/reactflowUtils";
 import { useGraphLayout } from "src/components/Graph/useGraphLayout";
 import { useColorMode } from "src/context/colorMode";
 import { useDependencyGraph } from "src/queries/useDependencyGraph";
+import { getReactFlowThemeStyle } from "src/theme";
 
 export const AssetGraph = ({ asset }: { readonly asset?: AssetResponse }) => {
   const { assetId } = useParams();
@@ -41,10 +43,10 @@ export const AssetGraph = ({ asset }: { readonly asset?: AssetResponse }) => {
   });
 
   const nodes = graphData?.nodes.map((node) =>
-    node.data.label === asset?.name ? { ...node, data: { ...node.data, isSelected: true } } : node,
+    node.id === `asset:${assetId}` ? { ...node, data: { ...node.data, isSelected: true } } : node,
   );
 
-  const [selectedDarkColor, selectedLightColor] = useToken("colors", ["gray.200", "gray.800"]);
+  const [selectedDarkColor, selectedLightColor] = useToken("colors", ["bg.muted", "bg.emphasized"]);
 
   const selectedColor = colorMode === "dark" ? selectedDarkColor : selectedLightColor;
 
@@ -67,12 +69,13 @@ export const AssetGraph = ({ asset }: { readonly asset?: AssetResponse }) => {
       edgeTypes={edgeTypes}
       // Fit view to selected task or the whole graph on render
       fitView
-      maxZoom={1}
+      maxZoom={1.5}
       minZoom={0.25}
       nodes={nodes}
       nodesDraggable={false}
       nodeTypes={nodeTypes}
       onlyRenderVisibleElements
+      style={getReactFlowThemeStyle(colorMode)}
     >
       <Background />
       <Controls showInteractive={false} />
@@ -84,6 +87,7 @@ export const AssetGraph = ({ asset }: { readonly asset?: AssetResponse }) => {
         pannable
         zoomable
       />
+      <DownloadButton name={asset?.name ?? asset?.uri ?? "asset"} />
     </ReactFlow>
   );
 };

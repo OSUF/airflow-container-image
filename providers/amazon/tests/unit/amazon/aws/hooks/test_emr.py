@@ -154,7 +154,6 @@ class TestEmrHook:
         assert "test failure details" in caplog.messages[-1]
         mock_conn.get_waiter.assert_called_with("step_complete")
 
-    @pytest.mark.db_test
     @mock_aws
     def test_create_job_flow_extra_args(self):
         """
@@ -196,7 +195,7 @@ class TestEmrHook:
 
     @pytest.mark.db_test
     @mock.patch("airflow.providers.amazon.aws.hooks.base_aws.AwsBaseHook.get_conn")
-    def test_missing_emr_conn_id(self, mock_boto3_client):
+    def test_missing_emr_conn_id(self, mock_boto3_client, sdk_connection_not_found):
         """Test not exists ``emr_conn_id``."""
         mock_run_job_flow = mock.MagicMock()
         mock_boto3_client.return_value.run_job_flow = mock_run_job_flow

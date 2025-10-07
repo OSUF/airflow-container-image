@@ -55,7 +55,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-dingding/|version|/providers/dinging/tests/system/dingding>
+    Example Dags <https://github.com/apache/airflow/tree/providers-dingding/|version|/providers/dinging/tests/system/dingding>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-dingding/>
     Installing from sources <installing-providers-from-sources>
 
@@ -76,7 +76,7 @@ apache-airflow-providers-dingding package
 `DingTalk <https://www.dingtalk.com/>`__
 
 
-Release: 3.7.3
+Release: 3.8.2
 
 Provider package
 ----------------
@@ -87,19 +87,19 @@ All classes for this package are included in the ``airflow.providers.dingding`` 
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation via
+You can install this package on top of an existing Airflow installation via
 ``pip install apache-airflow-providers-dingding``.
 For the minimum Airflow version supported, see ``Requirements`` below.
 
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.10.0``.
 
 =================================  ==================
 PIP package                        Version required
 =================================  ==================
-``apache-airflow``                 ``>=2.9.0``
+``apache-airflow``                 ``>=2.10.0``
 ``apache-airflow-providers-http``
 =================================  ==================
 
@@ -128,5 +128,5 @@ Downloading official packages
 You can download officially released packages and verify their checksums and signatures from the
 `Official Apache Download site <https://downloads.apache.org/airflow/providers/>`_
 
-* `The apache-airflow-providers-dingding 3.7.3 sdist package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3.tar.gz>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3.tar.gz.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3.tar.gz.sha512>`__)
-* `The apache-airflow-providers-dingding 3.7.3 wheel package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3-py3-none-any.whl>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3-py3-none-any.whl.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.7.3-py3-none-any.whl.sha512>`__)
+* `The apache-airflow-providers-dingding 3.8.2 sdist package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2.tar.gz>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2.tar.gz.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2.tar.gz.sha512>`__)
+* `The apache-airflow-providers-dingding 3.8.2 wheel package <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2-py3-none-any.whl>`_ (`asc <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2-py3-none-any.whl.asc>`__, `sha512 <https://downloads.apache.org/airflow/providers/apache_airflow_providers_dingding-3.8.2-py3-none-any.whl.sha512>`__)

@@ -19,8 +19,6 @@
 import { HStack, Badge, Text, Skeleton } from "@chakra-ui/react";
 import { Link, type To } from "react-router-dom";
 
-import { pluralize } from "src/utils";
-
 import { TrendCountChart, type ChartEvent } from "./TrendCountChart";
 
 type Props = {
@@ -43,24 +41,27 @@ export const TrendCountButton = ({
   label,
   route,
   startDate,
-}: Props) => {
-  if (count === 0 && !isLoading) {
-    return undefined;
-  }
-
-  return isLoading ? (
+}: Props) =>
+  isLoading ? (
     <Skeleton borderRadius={4} height="45px" width="350px" />
   ) : (
     <Link to={route}>
-      <HStack borderRadius={4} borderWidth={1} p={3} width="350px">
-        <Badge borderRadius="50%" colorPalette={colorPalette} variant="solid">
+      <HStack
+        _hover={{ bg: "bg.subtle" }}
+        borderColor="border.emphasized"
+        borderRadius={4}
+        borderWidth={1}
+        p={3}
+        transition="background-color 0.2s"
+        width="350px"
+      >
+        <Badge borderRadius="md" colorPalette={colorPalette} variant="solid">
           {count}
         </Badge>
         <Text fontSize="sm" fontWeight="bold">
-          {pluralize(label, count, undefined, true)}
+          {label}
         </Text>
         <TrendCountChart endDate={endDate} events={events} startDate={startDate} />
       </HStack>
     </Link>
   );
-};

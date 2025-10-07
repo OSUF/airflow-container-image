@@ -29,8 +29,10 @@ import sqlalchemy
 from cryptography.fernet import Fernet
 
 from airflow.exceptions import AirflowException
-from airflow.hooks.base import BaseHook
 from airflow.models import Connection, crypto
+from airflow.sdk import BaseHook
+
+from tests_common.test_utils.version_compat import SQLALCHEMY_V_1_4, SQLALCHEMY_V_2_0
 
 sqlite = pytest.importorskip("airflow.providers.sqlite.hooks.sqlite")
 
@@ -638,8 +640,18 @@ class TestConnection:
         assert conn.port is None
 
     @pytest.mark.db_test
-    def test_env_var_priority(self):
+    def test_env_var_priority(self, mock_supervisor_comms):
         from airflow.providers.sqlite.hooks.sqlite import SqliteHook
+        from airflow.sdk.execution_time.comms import ConnectionResult
+
+        conn = ConnectionResult(
+            conn_id="airflow_db",
+            conn_type="mysql",
+            host="mysql",
+            login="root",
+        )
+
+        mock_supervisor_comms.send.return_value = conn
 
         conn = SqliteHook.get_connection(conn_id="airflow_db")
         assert conn.host != "ec2.compute.com"
@@ -667,10 +679,20 @@ class TestConnection:
     def test_dbapi_get_uri(self):
         conn = BaseHook.get_connection(conn_id="test_uri")
         hook = conn.get_hook()
-        assert hook.get_uri() == "postgresql://username:password@ec2.compute.com:5432/the_database"
+
+        ppg3_mode: bool = SQLALCHEMY_V_2_0 and "psycopg" in hook.get_uri()
+        if ppg3_mode:
+            assert (
+                hook.get_uri() == "postgresql+psycopg://username:password@ec2.compute.com:5432/the_database"
+            )
+        else:
+            assert hook.get_uri() == "postgresql://username:password@ec2.compute.com:5432/the_database"
         conn2 = BaseHook.get_connection(conn_id="test_uri_no_creds")
         hook2 = conn2.get_hook()
-        assert hook2.get_uri() == "postgresql://ec2.compute.com/the_database"
+        if ppg3_mode:
+            assert hook2.get_uri() == "postgresql+psycopg://ec2.compute.com/the_database"
+        else:
+            assert hook2.get_uri() == "postgresql://ec2.compute.com/the_database"
 
     @mock.patch.dict(
         "os.environ",
@@ -683,8 +705,17 @@ class TestConnection:
         conn = BaseHook.get_connection(conn_id="test_uri")
         hook = conn.get_hook()
         engine = hook.get_sqlalchemy_engine()
+
+        if SQLALCHEMY_V_2_0 and "psycopg" in hook.get_uri():
+            expected = "postgresql+psycopg://username:password@ec2.compute.com:5432/the_database"
+        else:
+            expected = "postgresql://username:password@ec2.compute.com:5432/the_database"
+
         assert isinstance(engine, sqlalchemy.engine.Engine)
-        assert str(engine.url) == "postgresql://username:password@ec2.compute.com:5432/the_database"
+        if SQLALCHEMY_V_1_4:
+            assert str(engine.url) == expected
+        else:
+            assert engine.url.render_as_string(hide_password=False) == expected
 
     @mock.patch.dict(
         "os.environ",

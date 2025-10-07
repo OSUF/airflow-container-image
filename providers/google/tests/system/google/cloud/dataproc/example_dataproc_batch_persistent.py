@@ -34,7 +34,12 @@ from airflow.providers.google.cloud.operators.dataproc import (
     DataprocDeleteClusterOperator,
 )
 from airflow.providers.google.cloud.operators.gcs import GCSCreateBucketOperator, GCSDeleteBucketOperator
-from airflow.utils.trigger_rule import TriggerRule
+
+try:
+    from airflow.sdk import TriggerRule
+except ImportError:
+    # Compatibility for Airflow < 3.1
+    from airflow.utils.trigger_rule import TriggerRule  # type: ignore[no-redef,attr-defined]
 
 from system.google import DEFAULT_GCP_SYSTEM_TEST_PROJECT_ID
 
@@ -55,7 +60,7 @@ CLUSTER_GENERATOR_CONFIG_FOR_PHS = ClusterGenerator(
     worker_machine_type="n1-standard-4",
     num_workers=0,
     properties={
-        "spark:spark.history.fs.logDirectory": f"gs://{BUCKET_NAME}/logging",
+        "spark:spark.history.fs.logDirectory": f"gs://{BUCKET_NAME}",
     },
     enable_component_gateway=True,
 ).make()

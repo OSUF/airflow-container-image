@@ -28,7 +28,7 @@ import pytest
 
 from airflow.jobs.job import Job
 from airflow.listeners.listener import get_listener_manager
-from airflow.models import DagBag, TaskInstance
+from airflow.models import TaskInstance
 from airflow.providers.google.cloud.openlineage.utils import get_from_nullable_chain
 from airflow.providers.openlineage.plugins.listener import OpenLineageListener
 from airflow.utils import timezone
@@ -37,14 +37,15 @@ from airflow.utils.types import DagRunType
 
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.db import clear_db_runs
-from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_2_PLUS
 
-if AIRFLOW_V_3_0_PLUS:
-    from airflow.utils.types import DagRunTriggeredByType
+if AIRFLOW_V_3_2_PLUS:
+    from airflow.dag_processing.dagbag import DagBag
+else:
+    from airflow.models.dagbag import DagBag  # type: ignore[attr-defined, no-redef]
 
-TEST_DAG_FOLDER = os.environ["AIRFLOW__CORE__DAGS_FOLDER"]
+TEST_DAG_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dags")
 DEFAULT_DATE = timezone.datetime(2016, 1, 1)
-
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +89,8 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
                 shutil.rmtree(dirpath)
             dirpath.mkdir(exist_ok=True, parents=True)
             lm = get_listener_manager()
-            lm.add_listener(OpenLineageListener())
+            listener = OpenLineageListener()
+            lm.add_listener(listener)
 
             dagbag = DagBag(
                 dag_folder=TEST_DAG_FOLDER,
@@ -97,22 +99,15 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
             dag = dagbag.dags.get("test_openlineage_execution")
             task = dag.get_task(task_name)
 
-            if AIRFLOW_V_3_0_PLUS:
-                dagrun_kwargs = {
-                    "logical_date": DEFAULT_DATE,
-                    "run_after": DEFAULT_DATE,
-                    "triggered_by": DagRunTriggeredByType.TEST,
-                }
-            else:
-                dagrun_kwargs = {"execution_date": DEFAULT_DATE}
             dag.create_dagrun(
                 run_id=run_id,
                 run_type=DagRunType.MANUAL,
                 data_interval=(DEFAULT_DATE, DEFAULT_DATE),
                 state=State.RUNNING,
                 start_date=DEFAULT_DATE,
-                **dagrun_kwargs,
+                execution_date=DEFAULT_DATE,
             )
+
             ti = TaskInstance(task=task, run_id=run_id)
             job = Job(id=random.randint(0, 23478197), dag_id=ti.dag_id)
             job_runner = LocalTaskJobRunner(job=job, task_instance=ti, ignore_ti_state=True)
@@ -120,7 +115,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
 
             return job_runner.task_runner.return_code(timeout=60)
 
-        @pytest.mark.db_test
         @conf_vars({("openlineage", "transport"): f'{{"type": "file", "log_file_path": "{listener_path}"}}'})
         def test_not_stalled_task_emits_proper_lineage(self):
             task_name = "execute_no_stall"
@@ -132,7 +126,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
             assert has_value_in_events(events, ["inputs", "name"], "on-start")
             assert has_value_in_events(events, ["inputs", "name"], "on-complete")
 
-        @pytest.mark.db_test
         @conf_vars({("openlineage", "transport"): f'{{"type": "file", "log_file_path": "{listener_path}"}}'})
         def test_not_stalled_failing_task_emits_proper_lineage(self):
             task_name = "execute_fail"
@@ -149,7 +142,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
                 ("openlineage", "execution_timeout"): "15",
             }
         )
-        @pytest.mark.db_test
         def test_short_stalled_task_emits_proper_lineage(self):
             self.setup_job("execute_short_stall", "test_short_stalled_task_emits_proper_lineage")
             events = get_sorted_events(tmp_dir)
@@ -162,7 +154,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
                 ("openlineage", "execution_timeout"): "3",
             }
         )
-        @pytest.mark.db_test
         def test_short_stalled_task_extraction_with_low_execution_is_killed_by_ol_timeout(self):
             self.setup_job(
                 "execute_short_stall",
@@ -173,7 +164,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
             assert not has_value_in_events(events, ["inputs", "name"], "on-complete")
 
         @conf_vars({("openlineage", "transport"): f'{{"type": "file", "log_file_path": "{listener_path}"}}'})
-        @pytest.mark.db_test
         def test_mid_stalled_task_is_killed_by_ol_timeout(self):
             self.setup_job("execute_mid_stall", "test_mid_stalled_task_is_killed_by_openlineage")
             events = get_sorted_events(tmp_dir)
@@ -187,7 +177,6 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
                 ("core", "task_success_overtime"): "3",
             }
         )
-        @pytest.mark.db_test
         def test_success_overtime_kills_tasks(self):
             # This test checks whether LocalTaskJobRunner kills OL listener which take
             # longer time than permitted by core.task_success_overtime setting
@@ -207,22 +196,15 @@ with tempfile.TemporaryDirectory(prefix="venv") as tmp_dir:
             dag = dagbag.dags.get("test_openlineage_execution")
             task = dag.get_task("execute_long_stall")
 
-            if AIRFLOW_V_3_0_PLUS:
-                dagrun_kwargs = {
-                    "logical_date": DEFAULT_DATE,
-                    "run_after": DEFAULT_DATE,
-                    "triggered_by": DagRunTriggeredByType.TEST,
-                }
-            else:
-                dagrun_kwargs = {"execution_date": DEFAULT_DATE}
             dag.create_dagrun(
                 run_id="test_long_stalled_task_is_killed_by_listener_overtime_if_ol_timeout_long_enough",
                 run_type=DagRunType.MANUAL,
                 data_interval=(DEFAULT_DATE, DEFAULT_DATE),
                 state=State.RUNNING,
                 start_date=DEFAULT_DATE,
-                **dagrun_kwargs,
+                execution_date=DEFAULT_DATE,
             )
+
             ti = TaskInstance(
                 task=task,
                 run_id="test_long_stalled_task_is_killed_by_listener_overtime_if_ol_timeout_long_enough",

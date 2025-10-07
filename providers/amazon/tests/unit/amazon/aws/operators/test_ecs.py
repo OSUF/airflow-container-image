@@ -81,6 +81,20 @@ RESPONSE_WITHOUT_FAILURES = {
         }
     ],
 }
+RESPONSE_WITHOUT_NAME = {
+    "failures": [],
+    "tasks": [
+        {
+            "containers": [],
+            "desiredStatus": "RUNNING",
+            "lastStatus": "PENDING",
+            "taskArn": f"arn:aws:ecs:us-east-1:012345678910:task/{TASK_ID}",
+            "taskDefinitionArn": "arn:aws:ecs:us-east-1:012345678910:task-definition/hello_world:11",
+        }
+    ],
+}
+
+
 WAITERS_TEST_CASES = [
     pytest.param(None, None, id="default-values"),
     pytest.param(3.14, None, id="set-delay-only"),
@@ -332,7 +346,6 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
             ],
         ],
     )
-    @mock.patch.object(EcsRunTaskOperator, "xcom_push")
     @mock.patch.object(EcsRunTaskOperator, "_wait_for_task_ended")
     @mock.patch.object(EcsRunTaskOperator, "_check_success_task")
     @mock.patch.object(EcsBaseOperator, "client")
@@ -341,7 +354,6 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         client_mock,
         check_mock,
         wait_mock,
-        xcom_mock,
         launch_type,
         capacity_provider_strategy,
         platform_version,
@@ -358,7 +370,10 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         )
         client_mock.run_task.return_value = RESPONSE_WITHOUT_FAILURES
 
-        self.ecs.execute(None)
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
+        self.ecs.execute(mock_context)
 
         client_mock.run_task.assert_called_once_with(
             cluster="c",
@@ -389,8 +404,11 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         resp_failures["failures"].append("dummy error")
         client_mock.run_task.return_value = resp_failures
 
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
         with pytest.raises(EcsOperatorError):
-            self.ecs.execute(None)
+            self.ecs.execute(mock_context)
 
         client_mock.run_task.assert_called_once_with(
             cluster="c",
@@ -622,6 +640,10 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         """Test reattach on first running Task ARN."""
         mock_ti = mock.MagicMock(name="MockedTaskInstance")
         mock_ti.key.primary = ("mock_dag", "mock_ti", "mock_runid", 42)
+        mock_ti.dag_id = "mock_dag"
+        mock_ti.task_id = "mock_ti"
+        mock_ti.run_id = "mock_runid"
+        mock_ti.map_index = 42
         fake_uuid = "01-02-03-04"
         uuid_mock.return_value = fake_uuid
 
@@ -696,49 +718,62 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         assert self.ecs.arn == f"arn:aws:ecs:us-east-1:012345678910:task/{TASK_ID}"
         assert "No active previously launched task found to reattach" in caplog.messages
 
-    @mock.patch.object(EcsRunTaskOperator, "xcom_push")
     @mock.patch.object(EcsBaseOperator, "client")
     @mock.patch("airflow.providers.amazon.aws.utils.task_log_fetcher.AwsTaskLogFetcher")
-    def test_execute_xcom_with_log(self, log_fetcher_mock, client_mock, xcom_mock):
+    def test_execute_xcom_with_log(self, log_fetcher_mock, client_mock):
         self.ecs.do_xcom_push = True
         self.ecs.task_log_fetcher = log_fetcher_mock
 
         log_fetcher_mock.get_last_log_message.return_value = "Log output"
 
-        assert self.ecs.execute(None) == "Log output"
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
 
-    @mock.patch.object(EcsRunTaskOperator, "xcom_push")
+        assert self.ecs.execute(mock_context) == "Log output"
+
     @mock.patch.object(EcsBaseOperator, "client")
     @mock.patch("airflow.providers.amazon.aws.utils.task_log_fetcher.AwsTaskLogFetcher")
-    def test_execute_xcom_with_no_log(self, log_fetcher_mock, client_mock, xcom_mock):
+    def test_execute_xcom_with_no_log(self, log_fetcher_mock, client_mock):
         self.ecs.do_xcom_push = True
         self.ecs.task_log_fetcher = log_fetcher_mock
 
         log_fetcher_mock.get_last_log_message.return_value = None
 
-        assert self.ecs.execute(None) is None
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
 
-    @mock.patch.object(EcsRunTaskOperator, "xcom_push")
+        assert self.ecs.execute(mock_context) is None
+
     @mock.patch.object(EcsBaseOperator, "client")
-    def test_execute_xcom_with_no_log_fetcher(self, client_mock, xcom_mock):
+    def test_execute_xcom_with_no_log_fetcher(self, client_mock):
         self.ecs.do_xcom_push = True
-        assert self.ecs.execute(None) is None
+
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
+        assert self.ecs.execute(mock_context) is None
 
     @mock.patch.object(EcsBaseOperator, "client")
     @mock.patch.object(AwsTaskLogFetcher, "get_last_log_message", return_value="Log output")
     def test_execute_xcom_disabled(self, log_fetcher_mock, client_mock):
         self.ecs.do_xcom_push = False
-        assert self.ecs.execute(None) is None
 
-    @mock.patch.object(EcsRunTaskOperator, "xcom_push")
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
+        assert self.ecs.execute(mock_context) is None
+
     @mock.patch.object(EcsRunTaskOperator, "client")
-    def test_with_defer(self, client_mock, xcom_mock):
+    def test_with_defer(self, client_mock):
         self.ecs.deferrable = True
 
         client_mock.run_task.return_value = RESPONSE_WITHOUT_FAILURES
 
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
         with pytest.raises(TaskDeferred) as deferred:
-            self.ecs.execute(None)
+            self.ecs.execute(mock_context)
 
         assert isinstance(deferred.value.trigger, TaskDoneTrigger)
         assert deferred.value.trigger.task_arn == f"arn:aws:ecs:us-east-1:012345678910:task/{TASK_ID}"
@@ -748,7 +783,10 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         event = {"status": "success", "task_arn": "my_arn", "cluster": "test_cluster"}
         self.ecs.reattach = True
 
-        self.ecs.execute_complete(None, event)
+        mock_ti = mock.MagicMock()
+        mock_context = {"ti": mock_ti, "task_instance": mock_ti}
+
+        self.ecs.execute_complete(mock_context, event)
 
         # task gets described to assert its success
         client_mock().describe_tasks.assert_called_once_with(cluster="test_cluster", tasks=["my_arn"])
@@ -763,6 +801,54 @@ class TestEcsRunTaskOperator(EcsBaseTestCase):
         )
 
         assert self.ecs._get_logs_stream_name().startswith(f"{prefix}/{container_name}/")
+
+    @mock.patch.object(EcsBaseOperator, "client")
+    @mock.patch("airflow.providers.amazon.aws.operators.ecs.sleep", return_value=None)
+    def test_container_name_not_set(self, sleep_mock, client_mock):
+        self.set_up_operator(
+            awslogs_group="awslogs-group",
+            awslogs_stream_prefix="prefix",
+            container_name=None,
+        )
+        client_mock.run_task.return_value = RESPONSE_WITHOUT_NAME
+        client_mock.describe_tasks.side_effect = [
+            {"tasks": [{"containers": []}]},
+            {"tasks": [{"containers": [{"name": "resolved-container"}]}]},
+        ]
+        self.ecs._start_task()
+        assert client_mock.describe_tasks.call_count == 2
+        assert self.ecs.container_name == "resolved-container"
+
+    @mock.patch.object(EcsBaseOperator, "client")
+    @mock.patch.object(EcsBaseOperator, "log")
+    @mock.patch("airflow.providers.amazon.aws.operators.ecs.sleep", return_value=None)
+    def test_container_name_resolution_fails_logs_message(self, sleep_mock, log_mock, client_mock):
+        self.set_up_operator(
+            awslogs_group="test-group",
+            awslogs_stream_prefix="prefix",
+            container_name=None,
+        )
+        client_mock.run_task.return_value = RESPONSE_WITHOUT_NAME
+        client_mock.describe_tasks.return_value = {"tasks": [{"containers": [{"name": None}]}]}
+
+        self.ecs._start_task()
+
+        assert client_mock.describe_tasks.call_count == 2
+        assert self.ecs.container_name is None
+        log_mock.info.assert_called_with(
+            "Could not find container name, required for the log stream after 2 tries"
+        )
+
+    @mock.patch.object(EcsBaseOperator, "client")
+    def test_container_name_not_polled(self, client_mock):
+        self.set_up_operator(
+            awslogs_group=None,
+            awslogs_stream_prefix=None,
+            container_name=None,
+        )
+        client_mock.run_task.return_value = RESPONSE_WITHOUT_NAME
+        self.ecs._start_task()
+        assert client_mock.describe_tasks.call_count == 0
 
 
 class TestEcsCreateClusterOperator(EcsBaseTestCase):

@@ -34,6 +34,7 @@ airbnb
 Airbyte
 airbyte
 AirflowConfigParser
+airflowctl
 AirflowException
 airflowignore
 ajax
@@ -215,13 +216,16 @@ botocore
 BounceX
 Bq
 bq
+bteq
 bugfix
 bugfixes
 buildType
 burstable
 bytestring
 cacert
+Cadwyn
 callables
+callsite
 camelCase
 Cancelled
 cancelled
@@ -268,6 +272,7 @@ classpaths
 cleartext
 cli
 clientId
+ClientSecretCredential
 cloudant
 CloudantV
 cloudbuild
@@ -374,6 +379,7 @@ Dagbag
 dagbag
 dagbags
 DagCallbackRequest
+dagfile
 DagFileProcessorManager
 dagfolder
 dagmodel
@@ -471,6 +477,7 @@ deduplicated
 deduplication
 deepcopy
 deepcopying
+DefaultAzureCredential
 deferrable
 deidentify
 DeidentifyContentResponse
@@ -526,6 +533,9 @@ Dlp
 dlp
 DlpJob
 DlpServiceClient
+DLQ
+Dlq
+dlq
 dms
 DNs
 dns
@@ -560,6 +570,7 @@ ds
 dsl
 Dsn
 dsn
+dst
 dts
 dttm
 dtypes
@@ -598,6 +609,7 @@ encodable
 encryptor
 enqueue
 enqueued
+Entra
 Entry
 EntryGroup
 EntryGroups
@@ -641,6 +653,7 @@ exc
 executables
 execvp
 exitcode
+expanduser
 explicit
 exportingmultiple
 ext
@@ -655,6 +668,7 @@ falsy
 faq
 Fargate
 fargate
+FastAPI
 fastapi
 fbee
 fc
@@ -735,6 +749,7 @@ Gentner
 geq
 getattr
 getboolean
+getcwd
 getfqdn
 getframe
 getint
@@ -765,6 +780,7 @@ golang
 googleads
 GoogleAdsRow
 googleapiclient
+googleapis
 GoogleDisplayVideo
 gpu
 gpus
@@ -780,6 +796,7 @@ grpc
 GSoD
 gsuite
 Gunicorn
+gunicorn
 gz
 Gzip
 gzipped
@@ -825,6 +842,7 @@ hotfix
 Hou
 howto
 hql
+href
 html
 htmlcontent
 Http
@@ -981,6 +999,7 @@ kerberized
 Kerberos
 kerberos
 KerberosClient
+keycloak
 Keyfile
 keyfile
 KeyManagementServiceClient
@@ -1044,6 +1063,7 @@ ListGenerator
 ListInfoTypesResponse
 ListModelsPager
 ListSecretsPager
+LiteralValue
 Liveness
 liveness
 livy
@@ -1087,6 +1107,8 @@ masterType
 materializations
 Matomo
 matomo
+MaxCompute
+maxcompute
 Maxime
 MaxRuntimeInSeconds
 mb
@@ -1145,6 +1167,8 @@ mssql
 mTLS
 mtls
 muldelete
+multi-cloud
+multimodal
 Multinamespace
 mutex
 mv
@@ -1217,6 +1241,7 @@ objectstorage
 observability
 od
 odbc
+odps
 ok
 Okta
 okta
@@ -1309,6 +1334,7 @@ pluggable
 pluggy
 plyvel
 png
+PoC
 PodManager
 podName
 PodSpec
@@ -1347,6 +1373,7 @@ prefetched
 prefetches
 preflight
 prefork
+prek
 Preload
 preloading
 prepend
@@ -1486,6 +1513,7 @@ repos
 repr
 req
 reqs
+requeue
 requeued
 Reserialize
 reserialize
@@ -1536,6 +1564,7 @@ sagemaker
 salesforce
 samesite
 saml
+sandboxed
 sanitization
 sas
 Sasl
@@ -1550,6 +1579,7 @@ sched
 schedulable
 schedulername
 schemas
+scrollbar
 sdk
 sdks
 searchpath
@@ -1584,6 +1614,7 @@ serializer
 serializers
 serverless
 ServiceAccount
+ServicePrincipalCredentials
 ServiceResource
 SES
 sessionmaker
@@ -1690,6 +1721,7 @@ StrictUndefined
 Stringified
 stringified
 Struct
+StructuredLogMessage
 STS
 subchart
 subclassed
@@ -1767,11 +1799,13 @@ taskgroup
 TaskGroups
 taskGroups
 TaskInstance
+taskInstance
 taskinstance
 TaskInstanceKey
 taskinstancekey
 taskmeta
 taskmixin
+tasksDuration
 tasksetmeta
 tasksState
 taskTree
@@ -1784,6 +1818,7 @@ templatable
 templateable
 Templated
 templated
+templater
 Templating
 templating
 templatize
@@ -1938,6 +1973,8 @@ utilise
 Utils
 utils
 uuid
+uv
+uvicorn
 V1JobList
 validator
 validators
@@ -1960,6 +1997,8 @@ VideoIntelligenceServiceClient
 views
 virtualenv
 virtualenvs
+virtualized
+Vite
 vm
 VolumeKmsKeyId
 VolumeMount

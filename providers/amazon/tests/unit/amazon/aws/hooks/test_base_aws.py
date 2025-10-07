@@ -50,6 +50,7 @@ from airflow.providers.amazon.aws.hooks.base_aws import (
 from airflow.providers.amazon.aws.utils.connection_wrapper import AwsConnectionWrapper
 
 from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
 pytest.importorskip("aiobotocore")
 
@@ -430,9 +431,8 @@ class TestAwsBaseHook:
         assert mock_class_name.call_count == len(found_classes)
         assert user_agent_tags["Caller"] == found_classes[-1]
 
-    @pytest.mark.db_test
     @mock.patch.object(AwsEcsExecutor, "_load_run_kwargs")
-    def test_user_agent_caller_target_executor_found(self, mock_load_run_kwargs):
+    def test_user_agent_caller_target_executor_found(self, mock_load_run_kwargs, sdk_connection_not_found):
         with conf_vars(
             {
                 ("aws_ecs_executor", "cluster"): "foo",
@@ -456,7 +456,16 @@ class TestAwsBaseHook:
     @pytest.mark.db_test
     @pytest.mark.parametrize("env_var, expected_version", [({"AIRFLOW_CTX_DAG_ID": "banana"}, 5), [{}, None]])
     @mock.patch.object(AwsBaseHook, "_get_caller", return_value="Test")
-    def test_user_agent_dag_run_key_is_hashed_correctly(self, _, env_var, expected_version):
+    def test_user_agent_dag_run_key_is_hashed_correctly(
+        self, _, env_var, expected_version, mock_supervisor_comms
+    ):
+        if AIRFLOW_V_3_0_PLUS:
+            from airflow.sdk.execution_time.comms import ConnectionResult
+
+            mock_supervisor_comms.send.return_value = ConnectionResult(
+                conn_id="aws_default",
+                conn_type="aws",
+            )
         with mock.patch.dict(os.environ, env_var, clear=True):
             dag_run_key = self.fetch_tags()["DagRunKey"]
 
@@ -883,7 +892,6 @@ class TestAwsBaseHook:
         assert result
         assert hook.client_type == "s3"  # Same client_type which defined during initialisation
 
-    @pytest.mark.db_test
     @mock.patch("boto3.session.Session")
     def test_hook_connection_test_failed(self, mock_boto3_session):
         """Test ``test_connection`` failure."""
@@ -1135,7 +1143,6 @@ def test_waiter_config_params_not_provided(waiter_path_mock: MagicMock, caplog):
     assert "PARAM_1" in str(ae.value)
 
 
-@pytest.mark.db_test
 @mock.patch.object(AwsGenericHook, "waiter_path", new_callable=PropertyMock)
 def test_waiter_config_no_params_needed(waiter_path_mock: MagicMock, caplog):
     waiter_path_mock.return_value = TEST_WAITER_CONFIG_LOCATION

@@ -56,7 +56,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-alibaba/|version|/alibaba/tests/system/alibaba>
+    Example Dags <https://github.com/apache/airflow/tree/providers-alibaba/|version|/alibaba/tests/system/alibaba>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-alibaba/>
     Installing from sources <installing-providers-from-sources>
 
@@ -77,7 +77,7 @@ apache-airflow-providers-alibaba package
 Alibaba Cloud integration (including `Alibaba Cloud <https://www.alibabacloud.com/>`__).
 
 
-Release: 3.0.3
+Release: 3.2.3
 
 Provider package
 ----------------
@@ -88,20 +88,21 @@ All classes for this package are included in the ``airflow.providers.alibaba`` p
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation via
+You can install this package on top of an existing Airflow installation via
 ``pip install apache-airflow-providers-alibaba``.
 For the minimum Airflow version supported, see ``Requirements`` below.
 
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider distribution is ``2.9.0``.
+The minimum Apache Airflow version supported by this provider distribution is ``2.10.0``.
 
 ============================  ==================
 PIP package                   Version required
 ============================  ==================
-``apache-airflow``            ``>=2.9.0``
+``apache-airflow``            ``>=2.10.0``
 ``oss2``                      ``>=2.14.0``
 ``alibabacloud_adb20211201``  ``>=1.0.0``
 ``alibabacloud_tea_openapi``  ``>=0.3.7``
+``pyodps``                    ``>=0.12.2.2``
 ============================  ==================

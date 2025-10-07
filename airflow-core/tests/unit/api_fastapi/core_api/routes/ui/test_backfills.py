@@ -20,13 +20,14 @@ from unittest import mock
 
 import pytest
 
+from airflow._shared.timezones import timezone
 from airflow.models import DagModel
 from airflow.models.backfill import Backfill
-from airflow.utils import timezone
 from airflow.utils.session import provide_session
 
 from tests_common.test_utils.db import (
     clear_db_backfills,
+    clear_db_dag_bundles,
     clear_db_dags,
     clear_db_runs,
     clear_db_serialized_dags,
@@ -46,6 +47,7 @@ def _clean_db():
     clear_db_runs()
     clear_db_dags()
     clear_db_serialized_dags()
+    clear_db_dag_bundles()
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +64,7 @@ class TestBackfillEndpoint:
         for num in range(1, count + 1):
             dag_model = DagModel(
                 dag_id=f"{dag_id_prefix}_{num}",
+                bundle_name="testing",
                 fileloc=f"/tmp/dag_{num}.py",
                 is_stale=False,
                 timetable_summary="0 0 * * *",
@@ -87,7 +90,9 @@ class TestListBackfills(TestBackfillEndpoint):
             ({"dag_id": "TEST_DAG_1"}, ["backfill1"], 1),
         ],
     )
-    def test_should_response_200(self, test_params, response_params, total_entries, test_client, session):
+    def test_should_response_200(
+        self, test_params, response_params, total_entries, test_client, session, testing_dag_bundle
+    ):
         dags = self._create_dag_models()
         from_date = timezone.utcnow()
         to_date = timezone.utcnow()
@@ -104,6 +109,7 @@ class TestListBackfills(TestBackfillEndpoint):
             "backfill1": {
                 "completed_at": from_datetime_to_zulu(completed_at),
                 "created_at": mock.ANY,
+                "dag_display_name": "TEST_DAG_1",
                 "dag_id": "TEST_DAG_1",
                 "dag_run_conf": {},
                 "from_date": from_datetime_to_zulu(from_date),
@@ -117,6 +123,7 @@ class TestListBackfills(TestBackfillEndpoint):
             "backfill2": {
                 "completed_at": None,
                 "created_at": mock.ANY,
+                "dag_display_name": "TEST_DAG_2",
                 "dag_id": "TEST_DAG_2",
                 "dag_run_conf": {},
                 "from_date": from_datetime_to_zulu(from_date),
@@ -130,6 +137,7 @@ class TestListBackfills(TestBackfillEndpoint):
             "backfill3": {
                 "completed_at": None,
                 "created_at": mock.ANY,
+                "dag_display_name": "TEST_DAG_3",
                 "dag_id": "TEST_DAG_3",
                 "dag_run_conf": {},
                 "from_date": from_datetime_to_zulu(from_date),

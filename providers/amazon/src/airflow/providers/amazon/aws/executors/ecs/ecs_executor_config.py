@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 
-from airflow.configuration import conf
 from airflow.providers.amazon.aws.executors.ecs.utils import (
     CONFIG_GROUP_NAME,
     ECS_LAUNCH_TYPE_EC2,
@@ -46,23 +45,27 @@ from airflow.providers.amazon.aws.hooks.ecs import EcsHook
 from airflow.utils.helpers import prune_dict
 
 
-def _fetch_templated_kwargs() -> dict[str, str]:
-    run_task_kwargs_value = conf.get(CONFIG_GROUP_NAME, AllEcsConfigKeys.RUN_TASK_KWARGS, fallback=dict())
+def _fetch_templated_kwargs(conf) -> dict[str, str]:
+    run_task_kwargs_value = conf.get(
+        CONFIG_GROUP_NAME,
+        AllEcsConfigKeys.RUN_TASK_KWARGS,
+        fallback=dict(),
+    )
     return json.loads(str(run_task_kwargs_value))
 
 
-def _fetch_config_values() -> dict[str, str]:
+def _fetch_config_values(conf) -> dict[str, str]:
     return prune_dict(
         {key: conf.get(CONFIG_GROUP_NAME, key, fallback=None) for key in RunTaskKwargsConfigKeys()}
     )
 
 
-def build_task_kwargs() -> dict:
+def build_task_kwargs(conf) -> dict:
     all_config_keys = AllEcsConfigKeys()
     # This will put some kwargs at the root of the dictionary that do NOT belong there. However,
     # the code below expects them to be there and will rearrange them as necessary.
-    task_kwargs = _fetch_config_values()
-    task_kwargs.update(_fetch_templated_kwargs())
+    task_kwargs = _fetch_config_values(conf)
+    task_kwargs.update(_fetch_templated_kwargs(conf))
 
     has_launch_type: bool = all_config_keys.LAUNCH_TYPE in task_kwargs
     has_capacity_provider: bool = all_config_keys.CAPACITY_PROVIDER_STRATEGY in task_kwargs
@@ -101,14 +104,10 @@ def build_task_kwargs() -> dict:
     # The executor will overwrite the 'command' property during execution. Must always be the first container!
     task_kwargs["overrides"]["containerOverrides"][0]["command"] = []  # type: ignore
 
-    if any(
-        [
-            subnets := task_kwargs.pop(AllEcsConfigKeys.SUBNETS, None),
-            security_groups := task_kwargs.pop(AllEcsConfigKeys.SECURITY_GROUPS, None),
-            # Surrounding parens are for the walrus operator to function correctly along with the None check
-            (assign_public_ip := task_kwargs.pop(AllEcsConfigKeys.ASSIGN_PUBLIC_IP, None)) is not None,
-        ]
-    ):
+    subnets = task_kwargs.pop(AllEcsConfigKeys.SUBNETS, None)
+    security_groups = task_kwargs.pop(AllEcsConfigKeys.SECURITY_GROUPS, None)
+    assign_public_ip = task_kwargs.pop(AllEcsConfigKeys.ASSIGN_PUBLIC_IP, None)
+    if subnets or security_groups or assign_public_ip != "False":
         network_config = prune_dict(
             {
                 "awsvpcConfiguration": {

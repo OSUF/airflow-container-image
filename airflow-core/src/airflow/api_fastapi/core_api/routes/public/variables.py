@@ -19,8 +19,6 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query, status
-from fastapi.exceptions import RequestValidationError
-from pydantic import ValidationError
 from sqlalchemy import select
 
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
@@ -38,8 +36,15 @@ from airflow.api_fastapi.core_api.datamodels.variables import (
     VariableResponse,
 )
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
-from airflow.api_fastapi.core_api.security import requires_access_variable
-from airflow.api_fastapi.core_api.services.public.variables import BulkVariableService
+from airflow.api_fastapi.core_api.security import (
+    ReadableVariablesFilterDep,
+    requires_access_variable,
+    requires_access_variable_bulk,
+)
+from airflow.api_fastapi.core_api.services.public.variables import (
+    BulkVariableService,
+    update_orm_from_pydantic,
+)
 from airflow.api_fastapi.logging.decorators import action_logging
 from airflow.models.variable import Variable
 
@@ -47,7 +52,7 @@ variables_router = AirflowRouter(tags=["Variable"], prefix="/variables")
 
 
 @variables_router.delete(
-    "/{variable_key}",
+    "/{variable_key:path}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND]),
     dependencies=[Depends(action_logging()), Depends(requires_access_variable("DELETE"))],
@@ -64,7 +69,7 @@ def delete_variable(
 
 
 @variables_router.get(
-    "/{variable_key}",
+    "/{variable_key:path}",
     responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND]),
     dependencies=[Depends(requires_access_variable("GET"))],
 )
@@ -99,13 +104,14 @@ def get_variables(
             ).dynamic_depends()
         ),
     ],
+    readable_variables_filter: ReadableVariablesFilterDep,
     session: SessionDep,
-    varaible_key_pattern: QueryVariableKeyPatternSearch,
+    variable_key_pattern: QueryVariableKeyPatternSearch,
 ) -> VariableCollectionResponse:
     """Get all Variables entries."""
     variable_select, total_entries = paginated_select(
         statement=select(Variable),
-        filters=[varaible_key_pattern],
+        filters=[variable_key_pattern, readable_variables_filter],
         order_by=order_by,
         offset=offset,
         limit=limit,
@@ -121,7 +127,7 @@ def get_variables(
 
 
 @variables_router.patch(
-    "/{variable_key}",
+    "/{variable_key:path}",
     responses=create_openapi_http_exception_doc(
         [
             status.HTTP_400_BAD_REQUEST,
@@ -137,31 +143,7 @@ def patch_variable(
     update_mask: list[str] | None = Query(None),
 ) -> VariableResponse:
     """Update a variable by key."""
-    if patch_body.key != variable_key:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Invalid body, key from request body doesn't match uri parameter"
-        )
-    non_update_fields = {"key"}
-    variable = session.scalar(select(Variable).filter_by(key=variable_key).limit(1))
-    if not variable:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, f"The Variable with key: `{variable_key}` was not found"
-        )
-
-    fields_to_update = patch_body.model_fields_set
-    if update_mask:
-        fields_to_update = fields_to_update.intersection(update_mask)
-    else:
-        try:
-            VariableBody(**patch_body.model_dump())
-        except ValidationError as e:
-            raise RequestValidationError(errors=e.errors())
-
-    data = patch_body.model_dump(include=fields_to_update - non_update_fields, by_alias=True)
-
-    for key, val in data.items():
-        setattr(variable, key, val)
-
+    variable = update_orm_from_pydantic(variable_key, patch_body, update_mask, session)
     return variable
 
 
@@ -192,7 +174,7 @@ def post_variable(
 
 
 @variables_router.patch(
-    "", dependencies=[Depends(action_logging()), Depends(requires_access_variable("DELETE"))]
+    "", dependencies=[Depends(action_logging()), Depends(requires_access_variable_bulk())]
 )
 def bulk_variables(
     request: BulkBody[VariableBody],

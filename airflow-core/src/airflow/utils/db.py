@@ -24,15 +24,16 @@ import itertools
 import json
 import logging
 import os
+import signal
 import sys
 import time
+import traceback
 import warnings
-from collections.abc import Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from tempfile import gettempdir
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Protocol,
     TypeVar,
     overload,
@@ -59,6 +60,21 @@ from airflow.utils import helpers
 from airflow.utils.db_manager import RunDBManager
 from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.task_instance_session import get_current_task_instance_session
+
+USE_PSYCOPG3: bool
+try:
+    from importlib.util import find_spec
+
+    import sqlalchemy
+    from packaging.version import Version
+
+    is_psycopg3 = find_spec("psycopg") is not None
+    sqlalchemy_version = Version(sqlalchemy.__version__)
+    is_sqla2 = (sqlalchemy_version.major, sqlalchemy_version.minor, sqlalchemy_version.micro) >= (2, 0, 0)
+
+    USE_PSYCOPG3 = is_psycopg3 and is_sqla2
+except (ImportError, ModuleNotFoundError):
+    USE_PSYCOPG3 = False
 
 if TYPE_CHECKING:
     from alembic.runtime.environment import EnvironmentContext
@@ -93,7 +109,49 @@ _REVISION_HEADS_MAP: dict[str, str] = {
     "2.10.0": "22ed7efa9da2",
     "2.10.3": "5f2621c13b39",
     "3.0.0": "29ce7909c52b",
+    "3.0.3": "fe199e1abd77",
+    "3.1.0": "cc92b33c6709",
+    "3.2.0": "ab6dc0c82d0e",
 }
+
+
+@contextlib.contextmanager
+def timeout_with_traceback(seconds, message="Operation timed out"):
+    """
+    Raise a TimeoutException after specified seconds.
+
+    Logs the full call stack when timeout occurs.
+
+    Note: This uses SIGALRM and only works on Unix systems (not Windows).
+    """
+
+    class TimeoutException(Exception):
+        """Exception raised when a timeout occurs."""
+
+    def timeout_handler(signum, frame):
+        # Capture the full call stack
+        stack_trace = "".join(traceback.format_stack(frame))
+
+        # Log the timeout and stack trace
+        log.error(
+            "\n%s after %s seconds\nFull call stack at timeout:\n%s",
+            message,
+            seconds,
+            stack_trace,
+        )
+
+        raise TimeoutException(message)
+
+    # Set the signal handler
+    old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+
+    try:
+        yield
+    finally:
+        # Cancel the alarm and restore the old handler
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 @provide_session
@@ -123,9 +181,16 @@ def add_default_pool_if_not_exists(session: Session = NEW_SESSION):
 @provide_session
 def create_default_connections(session: Session = NEW_SESSION):
     """Create default Airflow connections."""
+    conns = get_default_connections()
+
+    for c in conns:
+        merge_conn(c, session)
+
+
+def get_default_connections():
     from airflow.models.connection import Connection
 
-    merge_conn(
+    conns = [
         Connection(
             conn_id="airflow_db",
             conn_type="mysql",
@@ -134,40 +199,26 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="",
             schema="airflow",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="athena_default",
             conn_type="athena",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="aws_default",
             conn_type="aws",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="azure_batch_default",
             conn_type="azure_batch",
             login="<ACCOUNT_NAME>",
             password="",
             extra="""{"account_url": "<ACCOUNT_URL>"}""",
-        )
-    )
-    merge_conn(
+        ),
         Connection(
             conn_id="azure_cosmos_default",
             conn_type="azure_cosmos",
             extra='{"database_name": "<DATABASE_NAME>", "collection_name": "<COLLECTION_NAME>" }',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="azure_data_explorer_default",
             conn_type="azure_data_explorer",
@@ -176,50 +227,32 @@ def create_default_connections(session: Session = NEW_SESSION):
                     "tenant": "<TENANT ID>", "certificate": "<APPLICATION PEM CERTIFICATE>",
                     "thumbprint": "<APPLICATION CERTIFICATE THUMBPRINT>"}""",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="azure_data_lake_default",
             conn_type="azure_data_lake",
             extra='{"tenant": "<TENANT>", "account_name": "<ACCOUNTNAME>" }',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="azure_default",
             conn_type="azure",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="cassandra_default",
             conn_type="cassandra",
             host="cassandra",
             port=9042,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="databricks_default",
             conn_type="databricks",
             host="localhost",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="dingding_default",
             conn_type="http",
             host="",
             password="",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="drill_default",
             conn_type="drill",
@@ -227,9 +260,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=8047,
             extra='{"dialect_driver": "drill+sadrill", "storage_plugin": "dfs"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="druid_broker_default",
             conn_type="druid",
@@ -237,9 +267,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=8082,
             extra='{"endpoint": "druid/v2/sql"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="druid_ingest_default",
             conn_type="druid",
@@ -247,9 +274,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=8081,
             extra='{"endpoint": "druid/indexer/v1/task"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="elasticsearch_default",
             conn_type="elasticsearch",
@@ -257,9 +281,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="http",
             port=9200,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="emr_default",
             conn_type="emr",
@@ -308,9 +329,6 @@ def create_default_connections(session: Session = NEW_SESSION):
                 }
             """,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="facebook_default",
             conn_type="facebook_social",
@@ -322,17 +340,11 @@ def create_default_connections(session: Session = NEW_SESSION):
                 }
             """,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="fs_default",
             conn_type="fs",
             extra='{"path": "/"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="ftp_default",
             conn_type="ftp",
@@ -342,26 +354,17 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="airflow",
             extra='{"key_file": "~/.ssh/id_rsa", "no_host_key_check": true}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="google_cloud_default",
             conn_type="google_cloud_platform",
             schema="default",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="gremlin_default",
             conn_type="gremlin",
             host="gremlin",
             port=8182,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="hive_cli_default",
             conn_type="hive_cli",
@@ -370,9 +373,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             extra='{"use_beeline": true, "auth": ""}',
             schema="default",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="hiveserver2_default",
             conn_type="hiveserver2",
@@ -380,41 +380,26 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="default",
             port=10000,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="http_default",
             conn_type="http",
             host="https://www.httpbin.org/",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="iceberg_default",
             conn_type="iceberg",
             host="https://api.iceberg.io/ws/v1",
         ),
-        session,
-    )
-    merge_conn(Connection(conn_id="impala_default", conn_type="impala", host="localhost", port=21050))
-    merge_conn(
+        Connection(conn_id="impala_default", conn_type="impala", host="localhost", port=21050),
         Connection(
             conn_id="kafka_default",
             conn_type="kafka",
             extra=json.dumps({"bootstrap.servers": "broker:29092", "group.id": "my-group"}),
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="kubernetes_default",
             conn_type="kubernetes",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="kylin_default",
             conn_type="kylin",
@@ -423,18 +408,12 @@ def create_default_connections(session: Session = NEW_SESSION):
             login="ADMIN",
             password="KYLIN",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="leveldb_default",
             conn_type="leveldb",
             host="localhost",
         ),
-        session,
-    )
-    merge_conn(Connection(conn_id="livy_default", conn_type="livy", host="livy", port=8998), session)
-    merge_conn(
+        Connection(conn_id="livy_default", conn_type="livy", host="livy", port=8998),
         Connection(
             conn_id="local_mysql",
             conn_type="mysql",
@@ -443,9 +422,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="airflow",
             schema="airflow",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="metastore_default",
             conn_type="hive_metastore",
@@ -453,19 +429,13 @@ def create_default_connections(session: Session = NEW_SESSION):
             extra='{"authMechanism": "PLAIN"}',
             port=9083,
         ),
-        session,
-    )
-    merge_conn(Connection(conn_id="mongo_default", conn_type="mongo", host="mongo", port=27017), session)
-    merge_conn(
+        Connection(conn_id="mongo_default", conn_type="mongo", host="mongo", port=27017),
         Connection(
             conn_id="mssql_default",
             conn_type="mssql",
             host="localhost",
             port=1433,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="mysql_default",
             conn_type="mysql",
@@ -473,9 +443,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="airflow",
             host="mysql",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="opensearch_default",
             conn_type="opensearch",
@@ -483,18 +450,12 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="http",
             port=9200,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="opsgenie_default",
             conn_type="http",
             host="",
             password="",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="oracle_default",
             conn_type="oracle",
@@ -504,39 +465,28 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="schema",
             port=1521,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="oss_default",
             conn_type="oss",
-            extra="""{
+            extra="""
+                {
                 "auth_type": "AK",
                 "access_key_id": "<ACCESS_KEY_ID>",
                 "access_key_secret": "<ACCESS_KEY_SECRET>",
                 "region": "<YOUR_OSS_REGION>"}
                 """,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="pig_cli_default",
             conn_type="pig_cli",
             schema="default",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="pinot_admin_default",
             conn_type="pinot",
             host="localhost",
             port=9000,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="pinot_broker_default",
             conn_type="pinot",
@@ -544,9 +494,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=9000,
             extra='{"endpoint": "/query", "schema": "http"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="postgres_default",
             conn_type="postgres",
@@ -555,9 +502,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="airflow",
             host="postgres",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="presto_default",
             conn_type="presto",
@@ -565,18 +509,12 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="hive",
             port=3400,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="qdrant_default",
             conn_type="qdrant",
             host="qdrant",
             port=6333,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="redis_default",
             conn_type="redis",
@@ -584,13 +522,11 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=6379,
             extra='{"db": 0}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="redshift_default",
             conn_type="redshift",
-            extra="""{
+            extra="""
+{
     "iam": true,
     "cluster_identifier": "<REDSHIFT_CLUSTER_IDENTIFIER>",
     "port": 5439,
@@ -600,9 +536,6 @@ def create_default_connections(session: Session = NEW_SESSION):
     "region": ""
 }""",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="salesforce_default",
             conn_type="salesforce",
@@ -610,17 +543,11 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="password",
             extra='{"security_token": "security_token"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="segment_default",
             conn_type="segment",
             extra='{"write_key": "my-segment-write-key"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="sftp_default",
             conn_type="sftp",
@@ -629,34 +556,22 @@ def create_default_connections(session: Session = NEW_SESSION):
             login="airflow",
             extra='{"key_file": "~/.ssh/id_rsa", "no_host_key_check": true}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="spark_default",
             conn_type="spark",
             host="yarn",
             extra='{"queue": "root.default"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="sqlite_default",
             conn_type="sqlite",
             host=os.path.join(gettempdir(), "sqlite_default.db"),
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="ssh_default",
             conn_type="ssh",
             host="localhost",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="tableau_default",
             conn_type="tableau",
@@ -665,9 +580,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="password",
             extra='{"site_id": "my_site"}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="teradata_default",
             conn_type="teradata",
@@ -676,9 +588,6 @@ def create_default_connections(session: Session = NEW_SESSION):
             password="password",
             schema="schema",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="trino_default",
             conn_type="trino",
@@ -686,43 +595,28 @@ def create_default_connections(session: Session = NEW_SESSION):
             schema="hive",
             port=3400,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="vertica_default",
             conn_type="vertica",
             host="localhost",
             port=5433,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="wasb_default",
             conn_type="wasb",
             extra='{"sas_token": null}',
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="webhdfs_default",
             conn_type="hdfs",
             host="localhost",
             port=50070,
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="yandexcloud_default",
             conn_type="yandexcloud",
             schema="default",
         ),
-        session,
-    )
-    merge_conn(
         Connection(
             conn_id="ydb_default",
             conn_type="ydb",
@@ -730,23 +624,114 @@ def create_default_connections(session: Session = NEW_SESSION):
             port=2135,
             extra={"database": "/local"},
         ),
-        session,
-    )
+    ]
+    return conns
+
+
+class AutocommitEngineForMySQL:
+    """
+    Context manager to temporarily use AUTOCOMMIT isolation level for MySQL.
+
+    This is needed to work around MySQL 8.4 metadata lock issues with SQLAlchemy 2.0.
+    """
+
+    def __init__(self):
+        self.is_mysql = settings.SQL_ALCHEMY_CONN and settings.SQL_ALCHEMY_CONN.lower().startswith("mysql")
+        self.original_prepare_engine_args = None
+
+    def __enter__(self):
+        if not self.is_mysql:
+            return self
+
+        log.info("Entering AUTOCOMMIT mode for MySQL DDL operations")
+
+        # Save and replace prepare_engine_args
+        self.original_prepare_engine_args = settings.prepare_engine_args
+
+        def autocommit_prepare_engine_args(disable_connection_pool=False, pool_class=None):
+            # Call with keyword arguments to preserve the calling convention
+            args = self.original_prepare_engine_args(
+                disable_connection_pool=disable_connection_pool, pool_class=pool_class
+            )
+            args["isolation_level"] = "AUTOCOMMIT"
+            return args
+
+        settings.prepare_engine_args = autocommit_prepare_engine_args
+
+        # Recreate engine with AUTOCOMMIT
+        settings.dispose_orm(do_log=False)
+        settings.configure_orm()
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self.is_mysql:
+            return
+
+        log.info("Exiting AUTOCOMMIT mode, restoring normal transaction engine")
+
+        # Restore original function
+        settings.prepare_engine_args = self.original_prepare_engine_args
+
+        # Recreate engine with normal settings
+        settings.dispose_orm(do_log=False)
+        settings.configure_orm()
 
 
 def _create_db_from_orm(session):
-    log.info("Creating Airflow database tables from the ORM")
-    from alembic import command
-
+    """Create database tables from ORM models and stamp alembic version."""
     from airflow.models.base import Base
 
+    log.info("Creating Airflow database tables from the ORM")
+
+    # Debug setup if requested
+    _setup_debug_logging_if_needed()
+
+    log.info("Creating context")
     with create_global_lock(session=session, lock=DBLocks.MIGRATIONS):
+        log.info("Binding engine")
         engine = session.get_bind().engine
+        log.info("Pool status: %s", engine.pool.status())
+
+        log.info("Creating metadata")
         Base.metadata.create_all(engine)
-        # stamp the migration head
+
+        log.info("Getting alembic config")
         config = _get_alembic_config()
-        command.stamp(config, "head")
+
+        # Use AUTOCOMMIT for DDL to avoid metadata lock issues
+        with AutocommitEngineForMySQL():  # TODO: enable for sqlite too
+            from alembic import command
+
+            log.info("Stamping migration head")
+            command.stamp(config, "head")
+
         log.info("Airflow database tables created")
+
+
+def _setup_debug_logging_if_needed():
+    """Set up debug logging and stack trace dumping if SQLALCHEMY_ENGINE_DEBUG is set."""
+    if not os.environ.get("SQLALCHEMY_ENGINE_DEBUG"):
+        return
+
+    import faulthandler
+    import threading
+
+    # Enable SQLA debug logging
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.DEBUG)
+
+    # Enable Fault Handler
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+
+    # Print Active Threads and Stack Traces Periodically
+    def dump_stacks():
+        while True:
+            for thread_id, frame in sys._current_frames().items():
+                log.info("\nThread %s stack:", thread_id)
+                traceback.print_stack(frame)
+            time.sleep(300)
+
+    threading.Thread(target=dump_stacks, daemon=True).start()
 
 
 @provide_session
@@ -759,10 +744,11 @@ def initdb(session: Session = NEW_SESSION):
     import_all_models()
 
     db_exists = _get_current_revision(session)
-    if db_exists:
-        upgradedb(session=session)
-    else:
-        _create_db_from_orm(session=session)
+    with timeout_with_traceback(60 * 20, "DB upgrade/creation timed out."):
+        if db_exists:
+            upgradedb(session=session)
+        else:
+            _create_db_from_orm(session=session)
 
     external_db_manager.initdb(session)
     # Add default pool & sync log_template
@@ -1217,23 +1203,9 @@ def downgrade(*, to_revision, from_revision=None, show_sql_only=False, session: 
 
     log.info("Attempting downgrade to revision %s", to_revision)
     config = _get_alembic_config()
-    # Check if downgrade is less than 3.0.0 and requires that `ab_user` fab table is present
-    if _revision_greater(config, _REVISION_HEADS_MAP["3.0.0"], to_revision):
-        if conf.getboolean("core", "unit_test_mode"):
-            try:
-                from airflow.providers.fab.auth_manager.models.db import FABDBManager
-
-                dbm = FABDBManager(session)
-                dbm.initdb()
-            except ImportError:
-                log.warning("Import error occurred while importing FABDBManager. Skipping the check.")
-                pass
-        if not inspect(settings.engine).has_table("ab_user"):
-            log.error(
-                "Downgrade to revision less than 3.0.0 requires that `ab_user` table is present. "
-                "Please add FabDBManager to [core] external_db_managers and run fab migrations before proceeding"
-            )
-            return
+    # If downgrading to less than 3.0.0, we need to handle the FAB provider
+    if _revision_greater(config, _REVISION_HEADS_MAP["2.10.3"], to_revision):
+        _handle_fab_downgrade(session=session)
     with create_global_lock(session=session, lock=DBLocks.MIGRATIONS):
         if show_sql_only:
             log.warning("Generating sql scripts for manual migration.")
@@ -1244,6 +1216,70 @@ def downgrade(*, to_revision, from_revision=None, show_sql_only=False, session: 
         else:
             log.info("Applying downgrade migrations to Airflow database.")
             command.downgrade(config, revision=to_revision, sql=show_sql_only)
+
+
+def _get_fab_migration_version(*, session: Session) -> str | None:
+    """
+    Get the current FAB migration version from the database.
+
+    This intentionally queries the db directly, as the FAB provider and FABDBManager may not even be installed.
+
+    :param session: sqlalchemy session for connection to airflow metadata database
+    :return: The current FAB migration revision, or None if not found
+    """
+    try:
+        result = session.execute(text("SELECT version_num FROM alembic_version_fab LIMIT 1"))
+        row = result.fetchone()
+        return row[0] if row else None
+    except Exception:
+        # Table might not exist or other database error
+        return None
+
+
+def _handle_fab_downgrade(*, session: Session) -> None:
+    """
+    Handle FAB downgrade requirements for downgrades to Airflow versions < 3.0.0.
+
+    First, checks if the FAB db version matches the known version from 1.4.0.
+    If it matches, no FAB db tables need to be touched.
+    Otherwise, imports the FABDBManager and calls its downgrade method.
+
+    :param session: sqlalchemy session for connection to airflow metadata database
+    :raises RuntimeError: If FAB provider is required but cannot be imported
+    """
+    fab_version = _get_fab_migration_version(session=session)
+    if fab_version == "6709f7a774b9":  # 1.4.0
+        # FAB version matches - we can proceed without touching the FAB db tables
+        log.info(
+            "FAB migration version %s matches known version from 1.4.0. "
+            "FAB provider is not required for downgrade.",
+            fab_version,
+        )
+        return
+    connection = settings.engine.connect()
+    insp = inspect(connection)
+    if not fab_version and insp.has_table("ab_user"):
+        log.info(
+            "FAB migration version not found, but FAB tables exist. "
+            "FAB provider is not required for downgrade.",
+        )
+        return
+
+    # FAB db version is different or not found - require the FAB provider
+    try:
+        from airflow.providers.fab.auth_manager.models.db import FABDBManager
+    except ImportError:
+        raise RuntimeError(
+            "Import error occurred while importing FABDBManager. The apache-airflow-provider-fab package must be installed before we can "
+            "downgrade to <3.0.0."
+        )
+    dbm = FABDBManager(session)
+    if hasattr(dbm, "reset_to_2_x"):
+        dbm.reset_to_2_x()
+    else:
+        # Older version before we added that function, it only has a single migration so we can just create the tables
+        # to ensure they are there
+        dbm.create_db_from_orm()
 
 
 def drop_airflow_models(connection):
@@ -1314,15 +1350,28 @@ def create_global_lock(
     dialect = conn.dialect
     try:
         if dialect.name == "postgresql":
-            conn.execute(text("SET LOCK_TIMEOUT to :timeout"), {"timeout": lock_timeout})
-            conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": lock.value})
+            if USE_PSYCOPG3:
+                # psycopg3 doesn't support parameters for `SET`. Use `set_config` instead.
+                # The timeout value must be passed as a string of milliseconds.
+                conn.execute(
+                    text("SELECT set_config('lock_timeout', :timeout, false)"),
+                    {"timeout": str(lock_timeout)},
+                )
+                conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": lock.value})
+            else:
+                conn.execute(text("SET LOCK_TIMEOUT to :timeout"), {"timeout": lock_timeout})
+                conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": lock.value})
         elif dialect.name == "mysql" and dialect.server_version_info >= (5, 6):
             conn.execute(text("SELECT GET_LOCK(:id, :timeout)"), {"id": str(lock), "timeout": lock_timeout})
 
         yield
     finally:
         if dialect.name == "postgresql":
-            conn.execute(text("SET LOCK_TIMEOUT TO DEFAULT"))
+            if USE_PSYCOPG3:
+                # Use set_config() to reset the timeout to its default (0 = off/wait forever).
+                conn.execute(text("SELECT set_config('lock_timeout', '0', false)"))
+            else:
+                conn.execute(text("SET LOCK_TIMEOUT TO DEFAULT"))
             (unlocked,) = conn.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": lock.value}).fetchone()
             if not unlocked:
                 raise RuntimeError("Error releasing DB lock!")

@@ -111,7 +111,7 @@ Difference between ``KubernetesPodOperator`` and Kubernetes object spec
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 The :class:`~airflow.providers.cncf.kubernetes.operators.pod.KubernetesPodOperator` can be considered
 a substitute for a Kubernetes object spec definition that is able
-to be run in the Airflow scheduler in the DAG context. If using the operator, there is no need to create the
+to be run in the Airflow scheduler in the Dag context. If using the operator, there is no need to create the
 equivalent YAML/JSON object spec for the Pod you would like to run.
 The YAML file can still be provided with the ``pod_template_file`` or even the Pod Spec constructed in Python via
 the ``full_pod_spec`` parameter which requires a Kubernetes ``V1Pod``.
@@ -752,4 +752,4 @@ you to start a Kueue job in a Kubernetes cluster
 For further information, look at:
 
 * `Kubernetes Documentation <https://kubernetes.io/docs/home/>`__
-* `Rub a Kubernetes job in Kueue <https://kueue.sigs.k8s.io/docs/tasks/run/jobs/>`__
+* `Run a Kubernetes job in Kueue <https://kueue.sigs.k8s.io/docs/tasks/run/jobs/>`__

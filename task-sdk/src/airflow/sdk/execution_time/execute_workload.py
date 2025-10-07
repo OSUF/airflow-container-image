@@ -48,7 +48,7 @@ def execute_workload(workload: ExecuteTask) -> None:
 
     dispose_orm(do_log=False)
 
-    configure_logging(output=sys.stdout.buffer, enable_pretty_log=False)
+    configure_logging(output=sys.stdout.buffer, json_output=True)
 
     if not isinstance(workload, workloads.ExecuteTask):
         raise ValueError(f"Executor does not know how to handle {type(workload)}")
@@ -56,6 +56,9 @@ def execute_workload(workload: ExecuteTask) -> None:
     log.info("Executing workload", workload=workload)
 
     base_url = conf.get("api", "base_url", fallback="/")
+    # If it's a relative URL, use localhost:8080 as the default
+    if base_url.startswith("/"):
+        base_url = f"http://localhost:8080{base_url}"
     default_execution_api_server = f"{base_url.rstrip('/')}/execution/"
     server = conf.get("core", "execution_api_server_url", fallback=default_execution_api_server)
     log.info("Connecting to server:", server=server)

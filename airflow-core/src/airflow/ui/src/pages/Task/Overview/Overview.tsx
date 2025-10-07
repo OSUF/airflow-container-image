@@ -19,18 +19,22 @@
 import { Box, HStack, Skeleton, SimpleGrid } from "@chakra-ui/react";
 import dayjs from "dayjs";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 
 import { useTaskInstanceServiceGetTaskInstances } from "openapi/queries";
 import { DurationChart } from "src/components/DurationChart";
+import { NeedsReviewButton } from "src/components/NeedsReviewButton";
 import TimeRangeSelector from "src/components/TimeRangeSelector";
 import { TrendCountButton } from "src/components/TrendCountButton";
+import { SearchParamsKeys } from "src/constants/searchParams";
 import { isStatePending, useAutoRefresh } from "src/utils";
 
 const defaultHour = "24";
 
 export const Overview = () => {
-  const { dagId = "", taskId } = useParams();
+  const { dagId = "", groupId, taskId } = useParams();
+  const { t: translate } = useTranslation("dag");
 
   const now = dayjs();
   const [startDate, setStartDate] = useState(now.subtract(Number(defaultHour), "hour").toISOString());
@@ -46,16 +50,18 @@ export const Overview = () => {
       runAfterGte: startDate,
       runAfterLte: endDate,
       state: ["failed"],
-      taskId,
+      taskDisplayNamePattern: groupId ?? undefined,
+      taskId: Boolean(groupId) ? undefined : taskId,
     });
 
-  const { data: taskInstances, isLoading: isLoadingTaskInstances } = useTaskInstanceServiceGetTaskInstances(
+  const { data: tiData, isLoading: isLoadingTaskInstances } = useTaskInstanceServiceGetTaskInstances(
     {
       dagId,
       dagRunId: "~",
       limit: 14,
-      orderBy: "-run_after",
-      taskId,
+      orderBy: ["-run_after"],
+      taskDisplayNamePattern: groupId ?? undefined,
+      taskId: Boolean(groupId) ? undefined : taskId,
     },
     undefined,
     {
@@ -65,7 +71,8 @@ export const Overview = () => {
   );
 
   return (
-    <Box m={4}>
+    <Box m={4} spaceY={4}>
+      <NeedsReviewButton taskId={taskId} />
       <Box my={2}>
         <TimeRangeSelector
           defaultValue={defaultHour}
@@ -77,17 +84,19 @@ export const Overview = () => {
       </Box>
       <HStack flexWrap="wrap">
         <TrendCountButton
-          colorPalette="failed"
+          colorPalette={(failedTaskInstances?.total_entries ?? 0) === 0 ? "green" : "red"}
           count={failedTaskInstances?.total_entries ?? 0}
           endDate={endDate}
           events={(failedTaskInstances?.task_instances ?? []).map((ti) => ({
             timestamp: ti.start_date ?? ti.logical_date,
           }))}
           isLoading={isFailedTaskInstancesLoading}
-          label="Failed Task Instance"
+          label={translate("overview.buttons.failedTaskInstance", {
+            count: failedTaskInstances?.total_entries ?? 0,
+          })}
           route={{
             pathname: "task_instances",
-            search: "state=failed",
+            search: `${SearchParamsKeys.STATE}=failed`,
           }}
           startDate={startDate}
         />
@@ -97,7 +106,7 @@ export const Overview = () => {
           {isLoadingTaskInstances ? (
             <Skeleton height="200px" w="full" />
           ) : (
-            <DurationChart entries={taskInstances?.task_instances.slice().reverse()} kind="Task Instance" />
+            <DurationChart entries={tiData?.task_instances.slice().reverse()} kind="Task Instance" />
           )}
         </Box>
       </SimpleGrid>

@@ -40,14 +40,17 @@ import json
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 from google.analytics import admin_v1beta as google_analytics
-from google.cloud.exceptions import NotFound
 
-from airflow.decorators import task
-from airflow.models import Connection
+try:
+    from airflow.sdk import task
+except ImportError:
+    # Airflow 2 path
+    from airflow.decorators import task  # type: ignore[attr-defined,no-redef]
 from airflow.models.dag import DAG
-from airflow.providers.google.cloud.hooks.secret_manager import GoogleCloudSecretManagerHook
+from airflow.providers.google.common.utils.get_secret import get_secret
 from airflow.providers.google.marketing_platform.operators.analytics_admin import (
     GoogleAnalyticsAdminCreateDataStreamOperator,
     GoogleAnalyticsAdminCreatePropertyOperator,
@@ -57,8 +60,14 @@ from airflow.providers.google.marketing_platform.operators.analytics_admin impor
     GoogleAnalyticsAdminListAccountsOperator,
     GoogleAnalyticsAdminListGoogleAdsLinksOperator,
 )
-from airflow.settings import Session
-from airflow.utils.trigger_rule import TriggerRule
+
+try:
+    from airflow.sdk import TriggerRule
+except ImportError:
+    # Compatibility for Airflow < 3.1
+    from airflow.utils.trigger_rule import TriggerRule  # type: ignore[no-redef,attr-defined]
+
+from tests_common.test_utils.api_client_helpers import create_airflow_connection, delete_airflow_connection
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID", "default")
 DAG_ID = "google_analytics_admin"
@@ -73,13 +82,6 @@ GA_ADS_LINK_ID = "{{ task_instance.xcom_pull('list_google_ads_links')[0]['name']
 log = logging.getLogger(__name__)
 
 
-def get_secret(secret_id: str) -> str:
-    hook = GoogleCloudSecretManagerHook()
-    if hook.secret_exists(secret_id=secret_id):
-        return hook.access_secret(secret_id=secret_id).payload.data.decode()
-    raise NotFound("The secret '%s' not found", secret_id)
-
-
 with DAG(
     DAG_ID,
     schedule="@once",  # Override to match your needs,
@@ -90,26 +92,17 @@ with DAG(
 
     @task
     def create_connection(connection_id: str) -> None:
-        connection = Connection(
-            conn_id=connection_id,
-            conn_type="google_cloud_platform",
-        )
         conn_extra_json = json.dumps(
             {
                 "scope": "https://www.googleapis.com/auth/analytics.edit,"
                 "https://www.googleapis.com/auth/analytics.readonly",
             }
         )
-        connection.set_extra(conn_extra_json)
-
-        session = Session()
-        log.info("Removing connection %s if it exists", connection_id)
-        query = session.query(Connection).filter(Connection.conn_id == connection_id)
-        query.delete()
-
-        session.add(connection)
-        session.commit()
-        log.info("Connection %s created", CONNECTION_ID)
+        connection: dict[str, Any] = {"conn_type": "google_cloud_platform", "extra": conn_extra_json}
+        create_airflow_connection(
+            connection_id=connection_id,
+            connection_conf=connection,
+        )
 
     create_connection_task = create_connection(connection_id=CONNECTION_ID)
 
@@ -197,11 +190,7 @@ with DAG(
 
     @task(task_id="delete_connection")
     def delete_connection(connection_id: str) -> None:
-        session = Session()
-        log.info("Removing connection %s", connection_id)
-        query = session.query(Connection).filter(Connection.conn_id == connection_id)
-        query.delete()
-        session.commit()
+        delete_airflow_connection(connection_id=connection_id)
 
     delete_connection_task = delete_connection(connection_id=CONNECTION_ID)
 

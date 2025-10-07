@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Flex, Alert, CloseButton, Container, Heading, Span, Text } from "@chakra-ui/react";
+import { Alert, CloseButton, Container, Heading, Span, Text, Box, HStack } from "@chakra-ui/react";
 import type { LoginResponse } from "openapi-gen/requests/types.gen";
 import { useState } from "react";
 import { useCookies } from "react-cookie";
@@ -34,8 +34,7 @@ export type LoginBody = {
 
 const isSafeUrl = (targetUrl: string): boolean => {
   try {
-    // eslint-disable-next-line no-restricted-globals
-    const base = new URL(window.location.origin);
+    const base = new URL(globalThis.location.origin);
     const target = new URL(targetUrl, base);
 
     return (target.protocol === "http:" || target.protocol === "https:") && target.origin === base.origin;
@@ -54,20 +53,20 @@ export const Login = () => {
   );
 
   const onSuccess = (data: LoginResponse) => {
-    // Redirect to appropriate page with the token
-    const next = searchParams.get("next");
-
     // Fallback similar to FabAuthManager, strip off the next
     const fallback = "/";
+
+    // Redirect to appropriate page with the token
+    const next = searchParams.get("next") ?? fallback;
 
     setCookie("_token", data.access_token, {
       path: "/",
       secure: globalThis.location.protocol !== "http:",
     });
 
-    const redirectTarget = isSafeUrl(next!) ? next : fallback;
+    const redirectTarget = isSafeUrl(next) ? next : fallback;
 
-    globalThis.location.replace(redirectTarget!);
+    globalThis.location.replace(redirectTarget);
   };
   const { createToken, error, isPending, setError } = useCreateToken({
     onSuccess,
@@ -79,58 +78,78 @@ export const Login = () => {
   };
 
   return (
-    <Container
-      border="1px"
-      borderColor="gray.emphasized"
-      borderRadius={5}
-      borderStyle="solid"
-      borderWidth="1px"
-      maxW="2xl"
-      mt={2}
-      p="4"
+    <Box
+      _dark={{
+        bg: "gray.900",
+      }}
+      alignItems="center"
+      bg="gray.50"
+      display="flex"
+      justifyContent="center"
+      minH="100vh"
+      p={4}
     >
-      <Flex gap={2} mb={6}>
-        <AirflowPin height="35px" width="35px" />
-        <Heading colorPalette="blue" fontWeight="normal" size="xl">
-          Sign into Airflow
-        </Heading>
-      </Flex>
+      <Container
+        _dark={{
+          bg: "gray.800",
+        }}
+        bg="white"
+        borderRadius="lg"
+        boxShadow="lg"
+        maxW="md"
+        p={8}
+      >
+        <HStack gap={3} mb={6}>
+          <AirflowPin height="35px" width="35px" />
+          <Heading _dark={{ color: "white" }} color="gray.800" fontWeight="normal" size="xl">
+            Sign into Airflow
+          </Heading>
+        </HStack>
 
-      {Boolean(error) && <ErrorAlert error={error} />}
+        {Boolean(error) && (
+          <Box mb={4}>
+            <ErrorAlert error={error} />
+          </Box>
+        )}
 
-      <Text mb={4}>Enter your username and password below:</Text>
-      <LoginForm isPending={isPending} onLogin={onLogin} />
-      {isBannerDisabled === null && (
-        <Alert.Root mt={5} status="info">
-          <Alert.Indicator />
-          <Alert.Content>
-            <Alert.Title>Simple auth manager enabled</Alert.Title>
-            <Alert.Description>
-              The Simple auth manager is intended for development and testing. If you&apos;re using it in
-              production, ensure that access is controlled through other means. Please read{" "}
-              <Span textDecoration="underline">
-                <a
-                  href="https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/auth-manager/simple/index.html"
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  the documentation
-                </a>
-              </Span>{" "}
-              to learn more about simple auth manager.
-            </Alert.Description>
-          </Alert.Content>
-          <CloseButton
-            insetEnd="-2"
-            onClick={() => {
-              localStorage.setItem(LOCAL_STORAGE_DISABLE_BANNER_KEY, "1");
-              setIsBannerDisabled("1");
-            }}
-            pos="relative"
-            top="-2"
-          />
-        </Alert.Root>
-      )}
-    </Container>
+        <Text _dark={{ color: "gray.300" }} color="gray.600" mb={4}>
+          Enter your username and password below:
+        </Text>
+
+        <LoginForm isPending={isPending} onLogin={onLogin} />
+
+        {isBannerDisabled === null && (
+          <Alert.Root mt={5} status="info">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title>Simple auth manager enabled</Alert.Title>
+              <Alert.Description>
+                The Simple auth manager is intended for development and testing. If you&apos;re using it in
+                production, ensure that access is controlled through other means. Please read{" "}
+                <Span textDecoration="underline">
+                  <a
+                    href="https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/auth-manager/simple/index.html"
+                    rel="noreferrer noopener"
+                    target="_blank"
+                  >
+                    the documentation
+                  </a>
+                </Span>{" "}
+                to learn more about simple auth manager.
+              </Alert.Description>
+            </Alert.Content>
+            <CloseButton
+              insetEnd="-2"
+              onClick={() => {
+                localStorage.setItem(LOCAL_STORAGE_DISABLE_BANNER_KEY, "1");
+                setIsBannerDisabled("1");
+              }}
+              pos="relative"
+              top="-2"
+            />
+          </Alert.Root>
+        )}
+      </Container>
+    </Box>
   );
 };

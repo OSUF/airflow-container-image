@@ -24,8 +24,6 @@ import jmespath
 import pytest
 from chart_utils.helm_template_generator import render_chart
 
-from helm_tests.airflow_aux.test_container_lifecycle import CONTAINER_LIFECYCLE_PARAMETERS
-
 
 @pytest.fixture(scope="class")
 def isolate_chart(request, tmp_path_factory) -> Path:
@@ -256,7 +254,15 @@ class TestPodTemplateFile:
             "readOnly": True,
         } in jmespath.search("spec.initContainers[0].volumeMounts", docs[0])
 
-    def test_should_set_username_and_pass_env_variables(self):
+    @pytest.mark.parametrize(
+        "tag,expected_prefix",
+        [
+            ("v3.6.7", "GIT_SYNC_"),
+            ("v4.4.2", "GITSYNC_"),
+            ("latest", "GITSYNC_"),
+        ],
+    )
+    def test_should_set_username_and_pass_env_variables(self, tag, expected_prefix):
         docs = render_chart(
             values={
                 "dags": {
@@ -265,30 +271,28 @@ class TestPodTemplateFile:
                         "credentialsSecret": "user-pass-secret",
                         "sshKeySecret": None,
                     }
-                }
+                },
+                "images": {
+                    "gitSync": {
+                        "tag": tag,
+                    }
+                },
             },
             show_only=["templates/pod-template-file.yaml"],
             chart_dir=self.temp_chart_dir,
         )
 
-        assert {
-            "name": "GIT_SYNC_USERNAME",
-            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": "GIT_SYNC_USERNAME"}},
-        } in jmespath.search("spec.initContainers[0].env", docs[0])
-        assert {
-            "name": "GIT_SYNC_PASSWORD",
-            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": "GIT_SYNC_PASSWORD"}},
-        } in jmespath.search("spec.initContainers[0].env", docs[0])
+        envs = jmespath.search("spec.initContainers[0].env", docs[0])
 
-        # Testing git-sync v4
         assert {
-            "name": "GITSYNC_USERNAME",
-            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": "GITSYNC_USERNAME"}},
-        } in jmespath.search("spec.initContainers[0].env", docs[0])
+            "name": f"{expected_prefix}USERNAME",
+            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": f"{expected_prefix}USERNAME"}},
+        } in envs
+
         assert {
-            "name": "GITSYNC_PASSWORD",
-            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": "GITSYNC_PASSWORD"}},
-        } in jmespath.search("spec.initContainers[0].env", docs[0])
+            "name": f"{expected_prefix}PASSWORD",
+            "valueFrom": {"secretKeyRef": {"name": "user-pass-secret", "key": f"{expected_prefix}PASSWORD"}},
+        } in envs
 
     def test_should_set_the_dags_volume_claim_correctly_when_using_an_existing_claim(self):
         docs = render_chart(
@@ -577,20 +581,30 @@ class TestPodTemplateFile:
             "spec.topologySpreadConstraints[0]", docs[0]
         )
 
-    def test_scheduler_name(self):
+    @pytest.mark.parametrize(
+        "base_scheduler_name, worker_scheduler_name, expected",
+        [
+            ("default-scheduler", "most-allocated", "most-allocated"),
+            ("default-scheduler", None, "default-scheduler"),
+            (None, None, None),
+        ],
+    )
+    def test_scheduler_name(self, base_scheduler_name, worker_scheduler_name, expected):
         docs = render_chart(
-            values={"schedulerName": "airflow-scheduler"},
+            values={
+                "schedulerName": base_scheduler_name,
+                "workers": {"schedulerName": worker_scheduler_name},
+            },
             show_only=["templates/pod-template-file.yaml"],
             chart_dir=self.temp_chart_dir,
         )
 
-        assert (
-            jmespath.search(
-                "spec.schedulerName",
-                docs[0],
-            )
-            == "airflow-scheduler"
-        )
+        scheduler_name = jmespath.search("spec.schedulerName", docs[0])
+
+        if expected is not None:
+            assert scheduler_name == expected
+        else:
+            assert scheduler_name is None
 
     def test_should_not_create_default_affinity(self):
         docs = render_chart(show_only=["templates/pod-template-file.yaml"], chart_dir=self.temp_chart_dir)
@@ -923,21 +937,23 @@ class TestPodTemplateFile:
 
         assert jmespath.search("spec.priorityClassName", docs[0]) == "test-priority"
 
-    def test_workers_container_lifecycle_webhooks_are_configurable(self, hook_type="preStop"):
-        lifecycle_hook_params = CONTAINER_LIFECYCLE_PARAMETERS[hook_type]
-        lifecycle_hooks_config = {hook_type: lifecycle_hook_params["lifecycle_templated"]}
+    def test_workers_container_lifecycle_webhooks_are_configurable(self):
         docs = render_chart(
-            name=lifecycle_hook_params["release_name"],
+            name="test-release",
             values={
-                "workers": {"containerLifecycleHooks": lifecycle_hooks_config},
+                "workers": {
+                    "containerLifecycleHooks": {
+                        "preStop": {"exec": {"command": ["echo", "preStop", "{{ .Release.Name }}"]}}
+                    }
+                },
             },
             show_only=["templates/pod-template-file.yaml"],
             chart_dir=self.temp_chart_dir,
         )
 
-        assert lifecycle_hook_params["lifecycle_parsed"] == jmespath.search(
-            f"spec.containers[0].lifecycle.{hook_type}", docs[0]
-        )
+        assert jmespath.search("spec.containers[0].lifecycle.preStop", docs[0]) == {
+            "exec": {"command": ["echo", "preStop", "test-release"]}
+        }
 
     def test_termination_grace_period_seconds(self):
         docs = render_chart(
@@ -1055,15 +1071,27 @@ class TestPodTemplateFile:
         assert jmespath.search("spec.containers[0].command", docs[0]) is None
 
     @pytest.mark.parametrize(
-        "workers_values, kerberos_init_container",
+        "airflow_version, workers_values, kerberos_init_container, expected_config_name",
         [
-            ({"kerberosSidecar": {"enabled": True}}, False),
-            ({"kerberosInitContainer": {"enabled": True}}, True),
+            (None, {"kerberosSidecar": {"enabled": True}}, False, "api-server-config"),
+            (None, {"kerberosInitContainer": {"enabled": True}}, True, "api-server-config"),
+            ("2.10.5", {"kerberosSidecar": {"enabled": True}}, False, "webserver-config"),
+            ("2.10.5", {"kerberosInitContainer": {"enabled": True}}, True, "webserver-config"),
         ],
     )
-    def test_webserver_config_for_kerberos(self, workers_values, kerberos_init_container):
+    def test_webserver_config_for_kerberos(
+        self, airflow_version, workers_values, kerberos_init_container, expected_config_name
+    ):
+        values = {
+            "airflowVersion": airflow_version,
+            "workers": workers_values,
+            "apiServer": {"apiServerConfigConfigMapName": "config"},
+            "webserver": {"webserverConfigConfigMapName": "config"},
+        }
+        if airflow_version is None:
+            del values["airflowVersion"]
         docs = render_chart(
-            values={"workers": workers_values, "webserver": {"webserverConfigConfigMapName": "config"}},
+            values=values,
             show_only=["templates/pod-template-file.yaml"],
             chart_dir=self.temp_chart_dir,
         )
@@ -1074,8 +1102,8 @@ class TestPodTemplateFile:
 
         volume_mounts_names = jmespath.search(kerberos_container, docs[0])
         print(volume_mounts_names)
-        assert "webserver-config" in volume_mounts_names
-        assert "webserver-config" in jmespath.search("spec.volumes[*].name", docs[0])
+        assert expected_config_name in volume_mounts_names
+        assert expected_config_name in jmespath.search("spec.volumes[*].name", docs[0])
 
     @pytest.mark.parametrize(
         "workers_values",
@@ -1092,3 +1120,20 @@ class TestPodTemplateFile:
 
         scheduler_env = jmespath.search("spec.containers[0].env[*].name", docs[0])
         assert set(["KRB5_CONFIG", "KRB5CCNAME"]).issubset(scheduler_env)
+
+    def test_workers_kubernetes_service_account_custom_names_in_objects(self):
+        k8s_objects = render_chart(
+            "test-rbac",
+            values={
+                "workers": {
+                    "useWorkerDedicatedServiceAccounts": True,
+                    "kubernetes": {"serviceAccount": {"name": "TestWorkerKubernetes"}},
+                },
+            },
+            show_only=[
+                "templates/pod-template-file.yaml",
+            ],
+            chart_dir=self.temp_chart_dir,
+        )
+
+        assert jmespath.search("spec.serviceAccountName", k8s_objects[0]) == "TestWorkerKubernetes"

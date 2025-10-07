@@ -18,10 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from kubernetes_tests.test_base import (
-    EXECUTOR,
-    BaseK8STest,  # isort:skip (needed to workaround isort bug)
-)
+from kubernetes_tests.test_base import EXECUTOR, BaseK8STest
 
 
 # These tests are here because only KubernetesExecutor can run the tests in
@@ -30,7 +27,7 @@ from kubernetes_tests.test_base import (
 @pytest.mark.skipif(EXECUTOR == "KubernetesExecutor", reason="Does not run on KubernetesExecutor")
 class TestCeleryAndLocalExecutor(BaseK8STest):
     def test_integration_run_dag(self):
-        dag_id = "example_bash_operator"
+        dag_id = "example_simplest_dag"
         dag_run_id, logical_date = self.start_job_in_kubernetes(dag_id, self.host)
         print(f"Found the job with logical_date {logical_date}")
 
@@ -39,7 +36,7 @@ class TestCeleryAndLocalExecutor(BaseK8STest):
             host=self.host,
             dag_run_id=dag_run_id,
             dag_id=dag_id,
-            task_id="run_after_loop",
+            task_id="my_task",
             expected_final_state="success",
             timeout=300,
         )

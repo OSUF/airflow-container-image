@@ -18,21 +18,44 @@
  */
 import dayjs from "dayjs";
 import dayjsDuration from "dayjs/plugin/duration";
+import tz from "dayjs/plugin/timezone";
 
 dayjs.extend(dayjsDuration);
+dayjs.extend(tz);
+
+export const DEFAULT_DATETIME_FORMAT = "YYYY-MM-DD HH:mm:ss";
+export const DEFAULT_DATETIME_FORMAT_WITH_TZ = `${DEFAULT_DATETIME_FORMAT} z`;
+
+export const renderDuration = (durationSeconds: number | null | undefined): string | undefined => {
+  if (durationSeconds === null || durationSeconds === undefined || durationSeconds <= 0.01) {
+    return undefined;
+  }
+
+  // If under 10 seconds, render as 9s
+  if (durationSeconds < 10) {
+    return `${durationSeconds.toFixed(2)}s`;
+  }
+
+  // If under 1 day, render as HH:mm:ss otherwise include the number of days
+  return durationSeconds < 86_400
+    ? dayjs.duration(durationSeconds, "seconds").format("HH:mm:ss")
+    : dayjs.duration(durationSeconds, "seconds").format("D[d]HH:mm:ss");
+};
 
 export const getDuration = (startDate?: string | null, endDate?: string | null) => {
   const seconds = dayjs.duration(dayjs(endDate ?? undefined).diff(startDate ?? undefined)).asSeconds();
 
-  if (!seconds) {
-    return "00:00:00";
+  return renderDuration(seconds);
+};
+
+export const formatDate = (
+  date: number | string | null | undefined,
+  timezone: string,
+  format: string = DEFAULT_DATETIME_FORMAT,
+) => {
+  if (date === null || date === undefined || !dayjs(date).isValid()) {
+    return dayjs().tz(timezone).format(format);
   }
 
-  if (seconds < 10) {
-    return `${seconds.toFixed(2)}s`;
-  }
-
-  return seconds < 86_400
-    ? dayjs.duration(seconds, "seconds").format("HH:mm:ss")
-    : dayjs.duration(seconds, "seconds").format("D[d]HH:mm:ss");
+  return dayjs(date).tz(timezone).format(format);
 };

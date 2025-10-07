@@ -63,6 +63,91 @@ class TestExasolHookConn:
         assert kwargs["encryption"] is True
 
 
+class TestExasolHookSqlalchemy:
+    def get_connection(self, extra: dict | None = None) -> models.Connection:
+        return models.Connection(
+            login="login",
+            password="password",
+            host="host",
+            port=1234,
+            schema="schema",
+            extra=extra,
+        )
+
+    @pytest.mark.parametrize(
+        "init_scheme, extra_scheme, expected_result, expect_error",
+        [
+            (None, None, "exa+websocket", False),
+            ("exa+pyodbc", None, "exa+pyodbc", False),
+            (None, "exa+turbodbc", "exa+turbodbc", False),
+            ("exa+invalid", None, None, True),
+            (None, "exa+invalid", None, True),
+        ],
+        ids=[
+            "default",
+            "from_init_arg",
+            "from_extra",
+            "invalid_from_init_arg",
+            "invalid_from_extra",
+        ],
+    )
+    def test_sqlalchemy_scheme_property(self, init_scheme, extra_scheme, expected_result, expect_error):
+        hook = ExasolHook(sqlalchemy_scheme=init_scheme) if init_scheme else ExasolHook()
+        connection = self.get_connection(extra={"sqlalchemy_scheme": extra_scheme} if extra_scheme else None)
+        hook.get_connection = mock.Mock(return_value=connection)
+
+        if not expect_error:
+            assert hook.sqlalchemy_scheme == expected_result
+        else:
+            with pytest.raises(ValueError, match="sqlalchemy_scheme in connection extra should be one of"):
+                _ = hook.sqlalchemy_scheme
+
+    @pytest.mark.parametrize(
+        "hook_scheme, extra, expected_url",
+        [
+            (None, {}, "exa+websocket://login:password@host:1234/schema"),
+            (
+                None,
+                {"CONNECTIONLCALL": "en_US.UTF-8", "driver": "EXAODBC"},
+                "exa+websocket://login:password@host:1234/schema?CONNECTIONLCALL=en_US.UTF-8&driver=EXAODBC",
+            ),
+            (
+                None,
+                {"sqlalchemy_scheme": "exa+turbodbc", "CONNECTIONLCALL": "en_US.UTF-8", "driver": "EXAODBC"},
+                "exa+turbodbc://login:password@host:1234/schema?CONNECTIONLCALL=en_US.UTF-8&driver=EXAODBC",
+            ),
+            (
+                "exa+pyodbc",
+                {
+                    "sqlalchemy_scheme": "exa+turbodbc",  # should be overridden
+                    "CONNECTIONLCALL": "en_US.UTF-8",
+                    "driver": "EXAODBC",
+                },
+                "exa+pyodbc://login:password@host:1234/schema?CONNECTIONLCALL=en_US.UTF-8&driver=EXAODBC",
+            ),
+        ],
+        ids=[
+            "default",
+            "default_with_extra",
+            "scheme_from_extra_turbodbc",
+            "scheme_from_hook",
+        ],
+    )
+    def test_sqlalchemy_url_property(self, hook_scheme, extra, expected_url):
+        hook = ExasolHook(sqlalchemy_scheme=hook_scheme) if hook_scheme else ExasolHook()
+        hook.get_connection = mock.Mock(return_value=self.get_connection(extra=extra))
+        assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected_url
+
+    def test_get_uri(self):
+        hook = ExasolHook()
+        connection = self.get_connection(extra={"CONNECTIONLCALL": "en_US.UTF-8", "driver": "EXAODBC"})
+        hook.get_connection = mock.Mock(return_value=connection)
+        assert (
+            hook.get_uri()
+            == "exa+websocket://login:password@host:1234/schema?CONNECTIONLCALL=en_US.UTF-8&driver=EXAODBC"
+        )
+
+
 class TestExasolHook:
     def setup_method(self):
         self.cur = mock.MagicMock(rowcount=lambda: 0)
@@ -128,9 +213,8 @@ class TestExasolHook:
         self.conn.commit.assert_not_called()
 
     def test_run_no_queries(self):
-        with pytest.raises(ValueError) as err:
+        with pytest.raises(ValueError, match="List of SQL statements is empty"):
             self.db_hook.run(sql=[])
-        assert err.value.args[0] == "List of SQL statements is empty"
 
     def test_no_result_set(self):
         """Queries like DROP and SELECT are of type rowCount (not resultSet),
@@ -171,3 +255,23 @@ class TestExasolHook:
             query_params=query_params,
             export_params=export_params,
         )
+
+    def test_get_df_pandas(self):
+        statement = "SQL"
+        column = "col"
+        result_sets = [("row1",), ("row2",)]
+        mock_df = mock.MagicMock()
+        mock_df.columns = [column]
+        mock_df.values.tolist.return_value = result_sets
+        self.conn.export_to_pandas.return_value = mock_df
+
+        df = self.db_hook.get_df(statement, df_type="pandas")
+
+        assert column == df.columns[0]
+
+        assert result_sets[0][0] == df.values.tolist()[0][0]
+        assert result_sets[1][0] == df.values.tolist()[1][0]
+
+    def test_get_df_polars(self):
+        with pytest.raises(NotImplementedError):
+            self.db_hook.get_df("SQL", df_type="polars")

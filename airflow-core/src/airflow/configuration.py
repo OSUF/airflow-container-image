@@ -39,7 +39,7 @@ from copy import deepcopy
 from io import StringIO
 from json.decoder import JSONDecodeError
 from re import Pattern
-from typing import IO, TYPE_CHECKING, Any, Union
+from typing import IO, TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from packaging.version import parse as parse_version
@@ -47,9 +47,9 @@ from typing_extensions import overload
 
 from airflow.exceptions import AirflowConfigException
 from airflow.secrets import DEFAULT_SECRETS_SEARCH_PATH
+from airflow.task.weight_rule import WeightRule
 from airflow.utils import yaml
 from airflow.utils.module_loading import import_string
-from airflow.utils.weight_rule import WeightRule
 
 if TYPE_CHECKING:
     from airflow.api_fastapi.auth.managers.base_auth_manager import BaseAuthManager
@@ -64,9 +64,9 @@ if not sys.warnoptions:
 
 _SQLITE3_VERSION_PATTERN = re.compile(r"(?P<version>^\d+(?:\.\d+)*)\D?.*$")
 
-ConfigType = Union[str, int, float, bool]
+ConfigType = str | int | float | bool
 ConfigOptionsDictType = dict[str, ConfigType]
-ConfigSectionSourcesType = dict[str, Union[str, tuple[str, str]]]
+ConfigSectionSourcesType = dict[str, str | tuple[str, str]]
 ConfigSourcesType = dict[str, ConfigSectionSourcesType]
 
 ENV_VAR_PREFIX = "AIRFLOW__"
@@ -355,6 +355,25 @@ class AirflowConfigParser(ConfigParser):
         ("api", "ssl_key"): ("webserver", "web_server_ssl_key", "3.0"),
         ("api", "access_logfile"): ("webserver", "access_logfile", "3.0"),
         ("triggerer", "capacity"): ("triggerer", "default_capacity", "3.0"),
+        ("api", "expose_config"): ("webserver", "expose_config", "3.0.1"),
+        ("fab", "access_denied_message"): ("webserver", "access_denied_message", "3.0.2"),
+        ("fab", "expose_hostname"): ("webserver", "expose_hostname", "3.0.2"),
+        ("fab", "navbar_color"): ("webserver", "navbar_color", "3.0.2"),
+        ("fab", "navbar_text_color"): ("webserver", "navbar_text_color", "3.0.2"),
+        ("fab", "navbar_hover_color"): ("webserver", "navbar_hover_color", "3.0.2"),
+        ("fab", "navbar_text_hover_color"): ("webserver", "navbar_text_hover_color", "3.0.2"),
+        ("api", "secret_key"): ("webserver", "secret_key", "3.0.2"),
+        ("api", "enable_swagger_ui"): ("webserver", "enable_swagger_ui", "3.0.2"),
+        ("dag_processor", "parsing_pre_import_modules"): ("scheduler", "parsing_pre_import_modules", "3.0.4"),
+        ("api", "grid_view_sorting_order"): ("webserver", "grid_view_sorting_order", "3.1.0"),
+        ("api", "log_fetch_timeout_sec"): ("webserver", "log_fetch_timeout_sec", "3.1.0"),
+        ("api", "hide_paused_dags_by_default"): ("webserver", "hide_paused_dags_by_default", "3.1.0"),
+        ("api", "page_size"): ("webserver", "page_size", "3.1.0"),
+        ("api", "default_wrap"): ("webserver", "default_wrap", "3.1.0"),
+        ("api", "auto_refresh_interval"): ("webserver", "auto_refresh_interval", "3.1.0"),
+        ("api", "require_confirmation_dag_change"): ("webserver", "require_confirmation_dag_change", "3.1.0"),
+        ("api", "instance_name"): ("webserver", "instance_name", "3.1.0"),
+        ("api", "log_config"): ("api", "access_logfile", "3.1.0"),
     }
 
     # A mapping of new section -> (old section, since_version).
@@ -406,7 +425,7 @@ class AirflowConfigParser(ConfigParser):
         # celery_logging_level can be empty, which uses logging_level as fallback
         ("logging", "celery_logging_level"): [*_available_logging_levels, ""],
         ("webserver", "analytical_tool"): ["google_analytics", "metarouter", "segment", "matomo", ""],
-        ("webserver", "grid_view_sorting_order"): ["topological", "hierarchical_alphabetical"],
+        ("api", "grid_view_sorting_order"): ["topological", "hierarchical_alphabetical"],
     }
 
     upgraded_values: dict[tuple[str, str], str]
@@ -774,7 +793,7 @@ class AirflowConfigParser(ConfigParser):
         parsed = urlsplit(old_value)
         if parsed.scheme in bad_schemes:
             warnings.warn(
-                f"Bad scheme in Airflow configuration core > sql_alchemy_conn: `{parsed.scheme}`. "
+                f"Bad scheme in Airflow configuration [database] sql_alchemy_conn: `{parsed.scheme}`. "
                 "As of SQLAlchemy 1.4 (adopted in Airflow 2.3) this is no longer supported.  You must "
                 f"change to `{good_scheme}` before the next Airflow release.",
                 FutureWarning,
@@ -841,7 +860,8 @@ class AirflowConfigParser(ConfigParser):
         )
 
     def mask_secrets(self):
-        from airflow.sdk.execution_time.secrets_masker import mask_secret
+        from airflow._shared.secrets_masker import mask_secret as mask_secret_core
+        from airflow.sdk.log import mask_secret as mask_secret_sdk
 
         for section, key in self.sensitive_config_values:
             try:
@@ -854,14 +874,17 @@ class AirflowConfigParser(ConfigParser):
                     key,
                 )
                 continue
-            mask_secret(value)
+            mask_secret_core(value)
+            mask_secret_sdk(value)
 
-    def _env_var_name(self, section: str, key: str) -> str:
-        return f"{ENV_VAR_PREFIX}{section.replace('.', '_').upper()}__{key.upper()}"
+    def _env_var_name(self, section: str, key: str, team_name: str | None = None) -> str:
+        team_component: str = f"{team_name.upper()}___" if team_name else ""
+        return f"{ENV_VAR_PREFIX}{team_component}{section.replace('.', '_').upper()}__{key.upper()}"
 
-    def _get_env_var_option(self, section: str, key: str):
-        # must have format AIRFLOW__{SECTION}__{KEY} (note double underscore)
-        env_var = self._env_var_name(section, key)
+    def _get_env_var_option(self, section: str, key: str, team_name: str | None = None):
+        # must have format AIRFLOW__{SECTION}__{KEY} (note double underscore) OR for team based
+        # configuration must have the format AIRFLOW__{TEAM_NAME}___{SECTION}__{KEY}
+        env_var: str = self._env_var_name(section, key, team_name=team_name)
         if env_var in os.environ:
             return expand_env_var(os.environ[env_var])
         # alternatively AIRFLOW__{SECTION}__{KEY}_CMD (for a command)
@@ -883,7 +906,16 @@ class AirflowConfigParser(ConfigParser):
         if (section, key) in self.sensitive_config_values:
             if super().has_option(section, fallback_key):
                 command = super().get(section, fallback_key)
-                return run_command(command)
+                try:
+                    cmd_output = run_command(command)
+                except AirflowConfigException as e:
+                    raise e
+                except Exception as e:
+                    raise AirflowConfigException(
+                        f"Cannot run the command for the config section [{section}]{fallback_key}_cmd."
+                        f" Please check the {fallback_key} value."
+                    ) from e
+                return cmd_output
         return None
 
     def _get_cmd_option_from_config_sources(
@@ -942,16 +974,17 @@ class AirflowConfigParser(ConfigParser):
     @overload  # type: ignore[override]
     def get(self, section: str, key: str, fallback: str = ..., **kwargs) -> str: ...
 
-    @overload  # type: ignore[override]
+    @overload
     def get(self, section: str, key: str, **kwargs) -> str | None: ...
 
-    def get(  # type: ignore[override,misc]
+    def get(  # type: ignore[misc]
         self,
         section: str,
         key: str,
         suppress_warnings: bool = False,
         lookup_from_deprecated: bool = True,
         _extra_stacklevel: int = 0,
+        team_name: str | None = None,
         **kwargs,
     ) -> str | None:
         section = section.lower()
@@ -1014,6 +1047,7 @@ class AirflowConfigParser(ConfigParser):
             section,
             issue_warning=not warning_emitted,
             extra_stacklevel=_extra_stacklevel,
+            team_name=team_name,
         )
         if option is not None:
             return option
@@ -1140,13 +1174,14 @@ class AirflowConfigParser(ConfigParser):
         section: str,
         issue_warning: bool = True,
         extra_stacklevel: int = 0,
+        team_name: str | None = None,
     ) -> str | None:
-        option = self._get_env_var_option(section, key)
+        option = self._get_env_var_option(section, key, team_name=team_name)
         if option is not None:
             return option
         if deprecated_section and deprecated_key:
             with self.suppress_future_warnings():
-                option = self._get_env_var_option(deprecated_section, deprecated_key)
+                option = self._get_env_var_option(deprecated_section, deprecated_key, team_name=team_name)
             if option is not None:
                 if issue_warning:
                     self._warn_deprecate(section, key, deprecated_section, deprecated_key, extra_stacklevel)
@@ -1200,7 +1235,7 @@ class AirflowConfigParser(ConfigParser):
         val = self.get(section, key, **kwargs)
         if val is None:
             if "fallback" in kwargs:
-                return val
+                return kwargs["fallback"]
             raise AirflowConfigException(
                 f"Failed to convert value None to list. "
                 f'Please check "{key}" key in "{section}" section is set.'
@@ -1294,7 +1329,7 @@ class AirflowConfigParser(ConfigParser):
 
     def read(
         self,
-        filenames: (str | bytes | os.PathLike | Iterable[str | bytes | os.PathLike]),
+        filenames: str | bytes | os.PathLike | Iterable[str | bytes | os.PathLike],
         encoding=None,
     ):
         super().read(filenames=filenames, encoding=encoding)
@@ -2083,7 +2118,7 @@ def load_standard_airflow_configuration(airflow_config_parser: AirflowConfigPars
             )
         else:
             # there
-            AIRFLOW_HOME = airflow_config_parser.get("core", "airflow_home")  # type: ignore[assignment]
+            AIRFLOW_HOME = airflow_config_parser.get("core", "airflow_home")
             warnings.warn(msg, category=DeprecationWarning, stacklevel=1)
 
 

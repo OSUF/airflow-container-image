@@ -21,8 +21,8 @@ import { paramPlaceholder, useParamStore } from "src/queries/useParamStore";
 import type { FlexibleFormElementProps } from ".";
 import { NumberInputField, NumberInputRoot } from "../ui/NumberInput";
 
-export const FieldNumber = ({ name }: FlexibleFormElementProps) => {
-  const { paramsDict, setParamsDict } = useParamStore();
+export const FieldNumber = ({ name, namespace = "default", onUpdate }: FlexibleFormElementProps) => {
+  const { disabled, paramsDict, setParamsDict } = useParamStore(namespace);
   const param = paramsDict[name] ?? paramPlaceholder;
   const handleChange = (value: string) => {
     if (value === "") {
@@ -40,11 +40,13 @@ export const FieldNumber = ({ name }: FlexibleFormElementProps) => {
     }
 
     setParamsDict(paramsDict);
+    onUpdate(value);
   };
 
   return (
     <NumberInputRoot
       allowMouseWheel
+      disabled={disabled}
       id={`element_${name}`}
       max={param.schema.maximum ?? undefined}
       min={param.schema.minimum ?? undefined}

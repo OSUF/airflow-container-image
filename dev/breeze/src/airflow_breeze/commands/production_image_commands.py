@@ -145,7 +145,7 @@ def run_build_in_parallel(
             ]
     check_async_run_results(
         results=results,
-        success="All images built correctly",
+        success_message="All images built correctly",
         outputs=outputs,
         include_success_outputs=include_success_outputs,
         skip_cleanup=skip_cleanup,
@@ -527,7 +527,7 @@ def run_verify_in_parallel(
             ]
     check_async_run_results(
         results=results,
-        success="All images verified",
+        success_message="All images verified",
         outputs=outputs,
         include_success_outputs=include_success_outputs,
         skip_cleanup=skip_cleanup,
@@ -545,6 +545,11 @@ def run_verify_in_parallel(
     "--slim-image",
     help="The image to verify is slim and non-slim tests should be skipped.",
     is_flag=True,
+)
+@click.option(
+    "--manifest-file",
+    type=click.Path(exists=True, dir_okay=False, file_okay=True, path_type=Path),
+    help="Read digest of the image from the manifest file instead of using name and pulling it.",
 )
 @click.argument("extra_pytest_args", nargs=-1, type=click.UNPROCESSED)
 @option_python
@@ -565,6 +570,7 @@ def verify(
     python_versions: str,
     github_repository: str,
     image_name: str,
+    manifest_file: Path | None,
     pull: bool,
     slim_image: bool,
     github_token: str,
@@ -578,9 +584,15 @@ def verify(
     """Verify Production image."""
     perform_environment_checks()
     check_remote_ghcr_io_commands()
-    if (pull or image_name) and run_in_parallel:
+    if image_name and manifest_file:
         get_console().print(
-            "[error]You cannot use --pull,--image-name and --run-in-parallel at the same time. Exiting[/]"
+            "[error]You cannot use --image-name and --manifest-file at the same time. Exiting[/"
+        )
+        sys.exit(1)
+    if (pull or image_name or manifest_file) and run_in_parallel:
+        get_console().print(
+            "[error]You cannot use --pull,--image-name,--manifest-file and "
+            "--run-in-parallel at the same time. Exiting[/]"
         )
         sys.exit(1)
     if run_in_parallel:
@@ -605,12 +617,20 @@ def verify(
         )
     else:
         if image_name is None:
-            build_params = BuildProdParams(
-                python=python,
-                github_repository=github_repository,
-                github_token=github_token,
-            )
-            image_name = build_params.airflow_image_name
+            if manifest_file:
+                import json
+
+                manifest_dict = json.loads(manifest_file.read_text())
+                name = manifest_dict["image.name"]
+                digest = manifest_dict["containerimage.descriptor"]["digest"]
+                image_name = f"{name}@{digest}"
+            else:
+                build_params = BuildProdParams(
+                    python=python,
+                    github_repository=github_repository,
+                    github_token=github_token,
+                )
+                image_name = build_params.airflow_image_name
         if pull:
             check_remote_ghcr_io_commands()
             command_to_run = ["docker", "pull", image_name]
@@ -681,7 +701,7 @@ def load(
     from_run: str | None,
     from_pr: str | None,
     github_repository: str,
-    github_token: str,
+    github_token: str | None,
     image_file: Path | None,
     image_file_dir: Path,
     platform: str,
@@ -691,6 +711,13 @@ def load(
     """Load PROD image from a file."""
     perform_environment_checks()
     escaped_platform = platform.replace("/", "_")
+
+    if from_run or from_pr and not github_token:
+        get_console().print(
+            "[error]The parameter `--github-token` must be provided if `--from-run` or `--from-pr` is "
+            "provided. Exiting.[/]"
+        )
+        sys.exit(1)
 
     if not image_file:
         image_file_to_load = image_file_dir / f"prod-image-save-{escaped_platform}-{python}.tar"
