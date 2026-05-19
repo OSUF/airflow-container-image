@@ -14,7 +14,9 @@ RUN echo -e "\n[tls_system_default]\nCipherString = DEFAULT:@SECLEVEL=0" >> /etc
 
 
 COPY docker-context-files /docker-context-files
-RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
+RUN apt-get update
+#RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
+
 RUN apt-get install -y git
 
 RUN if [[ -f /docker-context-files/chromedriver ]]; then \
