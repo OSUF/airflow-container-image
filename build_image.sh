@@ -11,14 +11,14 @@ CMD1=(
     --build-arg ADDITIONAL_RUNTIME_APT_DEPS="sshpass"
     --tag "airflow-intermediate:prod"
     --progress plain
-    --no-cache
+    # --no-cache
 )
 CMD2=(
     docker build --file Dockerfile-osuf .
     --build-arg ENV="prod"
     --tag "p1lv01k8s.osufoundation.org:32000/airflow:$AIRFLOW_VERSION"
     --progress plain
-    --no-cache
+    # --no-cache
 )
 CMD3=(
     docker push p1lv01k8s.osufoundation.org:32000/airflow:$AIRFLOW_VERSION
