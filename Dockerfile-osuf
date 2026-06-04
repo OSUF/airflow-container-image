@@ -14,15 +14,17 @@ RUN echo -e "\n[tls_system_default]\nCipherString = DEFAULT:@SECLEVEL=0" >> /etc
 
 
 COPY docker-context-files /docker-context-files
-RUN apt-get update
-#RUN apt-get update && apt-get install -y -f --no-install-recommends /docker-context-files/*.deb
 
-RUN apt-get install -y git
+# Install git plus Chromium and its matching driver. Installing via apt pulls in
+# all required shared libraries and keeps the browser and driver version-matched,
+# so the previously bundled chromedriver binary is no longer needed.
+# Driver lands at /usr/bin/chromedriver, browser at /usr/bin/chromium.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        chromium \
+        chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN if [[ -f /docker-context-files/chromedriver ]]; then \
-        cp /docker-context-files/chromedriver "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
-        chmod a+x "${AIRFLOW_USER_HOME_DIR}/chromedriver"; \
-    fi;
 RUN if [[ -f /docker-context-files/azcopy ]]; then \
         cp /docker-context-files/azcopy "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
         chmod a+x "${AIRFLOW_USER_HOME_DIR}/azcopy"; \
